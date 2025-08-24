@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-primary: #00AEEF;
+  --color-navy: #00395D;
+}
+body {
+  @apply bg-white text-gray-900;
+}
+.container {
+  @apply max-w-6xl mx-auto px-4;
+}
+.btn-primary {
+  @apply inline-flex items-center justify-center rounded-md bg-barclays-blue px-4 py-2 font-medium text-white hover:opacity-90 transition;
+}
+.btn-secondary {
+  @apply inline-flex items-center justify-center rounded-md border border-barclays-navy px-4 py-2 font-medium text-barclays-navy hover:bg-barclays-navy hover:text-white transition;
+}
+.card {
+  @apply rounded-xl border border-gray-200 p-4 shadow-sm bg-white;
+}

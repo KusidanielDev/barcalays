@@ -1,0 +1,224 @@
+// FILE: prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  name          String?
+  email         String   @unique
+  passwordHash  String
+  role          String   @default("USER") // "USER" | "ADMIN"
+  approved      Boolean   @default(false) 
+  status        String   @default("APPROVED") // "PENDING" | "APPROVED" | "REJECTED"
+  phone         String?
+  alertsEnabled Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  accounts         Account[]
+  sessions         Session[]
+  payees           Payee[]
+  payments         Payment[]
+  auditLogs        AuditLog[]
+  standingOrders   StandingOrder[]
+  cards            Card[]
+  notificationPref NotificationPref?
+  budgets          Budget[]
+  goals            Goal[]
+  supportThreads   SupportThread[]
+}
+
+model Account {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  type      String
+  number    String   @unique
+  sortCode  String
+  balance   Int
+  currency  String   @default("GBP")
+  createdAt DateTime @default(now())
+
+   status    String   @default("PENDING") // "PENDING" | "OPEN" | "FROZEN" | "CLOSED"
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  // Named relations for clarity/symmetry
+  paymentsFrom   Payment[]       @relation("AccountPayments")
+  standingOrders StandingOrder[] @relation("AccountStandingOrders")
+  cards          Card[]          @relation("AccountCards")
+}
+
+model Transaction {
+  id           String   @id @default(cuid())
+  accountId    String
+  postedAt     DateTime
+  description  String
+  amount       Int
+  balanceAfter Int
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  sessionToken String   @unique
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Payee {
+  id            String   @id @default(cuid())
+  userId        String
+  name          String
+  sortCode      String
+  accountNumber String
+  reference     String?
+  createdAt     DateTime @default(now())
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payments       Payment[]
+  standingOrders StandingOrder[]
+}
+
+model Payment {
+  id            String   @id @default(cuid())
+  userId        String
+  fromAccountId String
+  payeeId       String?
+  amountPence   Int
+  description   String?
+  isExternal    Boolean  @default(false)
+  status        String   @default("PENDING_OTP") // e.g., "PENDING_OTP" | "COMPLETED" | "FAILED"
+  createdAt     DateTime @default(now())
+  otpCode       String?
+
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fromAccount Account @relation("AccountPayments", fields: [fromAccountId], references: [id], onDelete: Cascade)
+  payee       Payee?  @relation(fields: [payeeId], references: [id])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  meta      String? // stringified JSON
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model StandingOrder {
+  id            String   @id @default(cuid())
+  userId        String
+  fromAccountId String
+  payeeId       String?
+  amount        Int
+  schedule      String
+  note          String?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fromAccount Account @relation("AccountStandingOrders", fields: [fromAccountId], references: [id], onDelete: Cascade)
+  payee       Payee?  @relation(fields: [payeeId], references: [id])
+}
+
+model Card {
+  id        String   @id @default(cuid())
+  userId    String
+  accountId String
+  last4     String
+  status    String   @default("ACTIVE") // "ACTIVE" | "FROZEN"
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account Account @relation("AccountCards", fields: [accountId], references: [id], onDelete: Cascade)
+}
+
+model NotificationPref {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  emailTx   Boolean  @default(true)
+  smsTx     Boolean  @default(false)
+  appAlerts Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Budget {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  month     String
+  limit     Int
+  createdAt DateTime @default(now())
+
+  items BudgetItem[]
+  user  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model BudgetItem {
+  id        String   @id @default(cuid())
+  budgetId  String
+  category  String
+  limit     Int
+  spent     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  budget Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+}
+
+model Goal {
+  id        String    @id @default(cuid())
+  userId    String
+  name      String
+  target    Int
+  saved     Int       @default(0)
+  deadline  DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SupportThread {
+  id        String   @id @default(cuid())
+  userId    String
+  subject   String
+  status    String   @default("OPEN")
+  createdAt DateTime @default(now())
+
+  messages SupportMessage[]
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SupportMessage {
+  id        String   @id @default(cuid())
+  threadId  String
+  author    String
+  body      String
+  createdAt DateTime @default(now())
+
+  thread SupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+}

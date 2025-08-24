@@ -1,0 +1,33 @@
+// FILE: src/app/api/accounts/[id]/close/route.ts
+import { NextResponse } from "next/server";
+import { auth } from "../../../../../lib/auth";
+import { prisma } from "../../../../../lib/prisma";
+
+export async function POST(_: Request, { params }: { params: { id: string } }) {
+  const session = await auth();
+  if (!session?.user?.email)
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const user = await prisma.user.findUnique({
+    where: { email: session.user.email },
+  });
+
+  const acct = await prisma.account.findFirst({
+    where: { id: params.id, userId: user!.id },
+  });
+  if (!acct) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  await prisma.$transaction(async (tx) => {
+    await tx.transaction.deleteMany({ where: { accountId: acct.id } });
+    await tx.card.deleteMany({ where: { accountId: acct.id } });
+    await tx.account.delete({ where: { id: acct.id } });
+    await tx.auditLog.create({
+      data: {
+        userId: user!.id,
+        action: "ACCOUNT_DELETE",
+        meta: `{"accountId":"${acct.id}"}`,
+      },
+    });
+  });
+
+  return NextResponse.json({ ok: true });
+}

@@ -1,0 +1,91 @@
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --barclays-blue: #00aeef;
+  --barclays-navy: #0c1f3f;
+}
+
+html,
+body {
+  height: 100%;
+}
+body {
+  @apply bg-gray-50 text-gray-900 antialiased;
+}
+
+/* layout helpers */
+.container {
+  @apply mx-auto max-w-6xl px-4;
+}
+.card {
+  @apply bg-white rounded-2xl shadow-sm border border-gray-200 p-4 md:p-6;
+}
+
+/* buttons */
+.btn-primary {
+  @apply inline-flex items-center justify-center rounded-xl px-4 py-2 font-medium text-white;
+  background: var(--barclays-blue);
+}
+.btn-primary:hover {
+  @apply opacity-90;
+}
+.btn-primary:active {
+  @apply opacity-80;
+}
+.btn-primary:focus {
+  @apply outline-none ring-2 ring-offset-2;
+  border-color: var(--barclays-blue);
+}
+
+.btn-secondary {
+  @apply inline-flex items-center justify-center rounded-xl px-3 py-2 font-medium border;
+  color: var(--barclays-navy);
+  border-color: var(--barclays-navy);
+}
+.btn-secondary:hover {
+  @apply text-white;
+  background: var(--barclays-navy);
+}
+
+/* utility colors used in the app */
+.text-barclays-navy {
+  color: var(--barclays-navy);
+}
+.text-barclays-blue {
+  color: var(--barclays-blue);
+}
+.bg-barclays-blue {
+  background-color: var(--barclays-blue);
+}
+.border-barclays-blue {
+  border-color: var(--barclays-blue);
+}
+
+/* tables */
+table {
+  @apply w-full border-collapse;
+}
+th {
+  @apply text-left text-gray-500 font-medium py-2;
+}
+td {
+  @apply py-2;
+}
+tr {
+  @apply border-t;
+}
+
+/* forms */
+input,
+select,
+textarea {
+  @apply border rounded px-3 py-2 w-full;
+}
+
+/* links (avoid circular @apply on the built-in `underline` class) */
+a.underline {
+  text-decoration: underline;
+  text-underline-offset: 2px; /* same as Tailwind's underline-offset-2 */
+}

@@ -1,0 +1,45 @@
+{
+  "name": "barclays-bank-demo",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && prisma migrate deploy && next build",
+    "start": "next start",
+    "lint": "next lint",
+    "prisma:generate": "prisma generate",
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "5.16.2",
+    "autoprefixer": "10.4.19",
+    "bcryptjs": "^2.4.3",
+    "jose": "5.9.3",
+    "next": "^14.2.32",
+    "next-auth": "^5.0.0-beta.29",
+    "postcss": "8.4.39",
+    "prisma": "5.16.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "recharts": "^3.1.2",
+    "swr": "^2.3.6",
+    "tailwindcss": "3.4.10",
+    "zod": "3.23.8"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^3.0.0",
+    "@types/node": "^18.19.39",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "eslint": "8.57.0",
+    "eslint-config-next": "14.2.5",
+    "tsx": "^4.20.4",
+    "typescript": "5.5.4"
+  },
+  "overrides": {
+    "@next/swc": "14.2.5"
+  }
+}
