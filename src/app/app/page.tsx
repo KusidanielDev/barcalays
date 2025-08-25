@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import InvestSection from "./parts/InvestSection";
 import StocksTicker from "./parts/StocksTicker";
 import TeslaChart from "./parts/TeslaChart";
+import IncomeSummary from "./parts/IncomeSummary";
 
 /** ---------- Types for safe client props ---------- */
 type ClientAccount = {
@@ -12,21 +13,21 @@ type ClientAccount = {
   name: string;
   type: string;
   number: string;
-  balance: number;
+  balance: number; // pence (cash)
   currency: string;
 };
 type ClientTxn = {
   id: string;
   postedAt: string;
   description: string;
-  amount: number;
+  amount: number; // pence (+credit, -debit)
   accountName: string;
 };
 type ClientHolding = {
   id: string;
   accountId: string;
   quantity: number;
-  avgCostP: number;
+  avgCostP: number; // pence
   updatedAt: string;
   security: { symbol: string; name: string; currency: string };
   account: { id: string; name: string };
@@ -56,6 +57,33 @@ function sparkPath(values: number[], width = 260, height = 64, pad = 6) {
   return d;
 }
 
+// Local price helper (keep in sync with /api/invest/quotes & place-order)
+const BASE: Record<string, number> = {
+  AAPL: 189.12,
+  TSLA: 239.55,
+  VUSA: 77.32,
+  LGEN: 2.45,
+  HSBA: 6.9,
+  MSFT: 430.25,
+  AMZN: 171.16,
+  NVDA: 122.55,
+  GOOGL: 168.38,
+  META: 517.57,
+  BP: 4.85,
+  SHEL: 28.72,
+  BARC: 1.45,
+  RIO: 56.12,
+  VOD: 0.72,
+  INF: 8.5,
+  ENM: 9.1,
+};
+function serverPriceFor(sym: string, t: number) {
+  const base = BASE[sym] ?? 100;
+  const wave = Math.sin(Math.floor(t / 7000)) * 0.5;
+  const micro = ((t % 10000) / 10000 - 0.5) * 0.4;
+  return Math.max(0.5, base + wave + micro);
+}
+
 export default async function Dashboard() {
   const session = await auth();
   const email = session?.user?.email?.toLowerCase() || "";
@@ -69,14 +97,14 @@ export default async function Dashboard() {
           where: { userId: user.id, status: { in: ["OPEN", "PENDING"] } },
           orderBy: { createdAt: "asc" },
         }),
-        prisma.standingOrder.count({
-          where: { userId: user.id, active: true },
-        }),
+        prisma.standingOrder
+          .count({ where: { userId: user.id, active: true } })
+          .catch(() => 0),
         prisma.transaction.findMany({
           where: { account: { userId: user.id } },
           include: { account: true },
           orderBy: { postedAt: "desc" },
-          take: 20, // grab a few more for sparkline
+          take: 50,
         }),
       ])
     : [[], 0, [] as any[]];
@@ -90,40 +118,16 @@ export default async function Dashboard() {
     currency: a.currency,
   }));
 
-  const totalBalance = accounts.reduce((s, a) => s + a.balance, 0);
-  const txns: ClientTxn[] = (txDb ?? []).slice(0, 10).map((t) => ({
-    id: t.id,
-    postedAt: t.postedAt.toISOString(),
-    description: t.description,
-    amount: t.amount,
-    accountName: t.account.name,
-  }));
+  // If investment accounts exist, include holdings for InvestSection and valuation
+  const investAccountIds = accounts
+    .filter((a) => a.type === "INVESTMENT")
+    .map((a) => a.id);
+  const hasInvest = investAccountIds.length > 0;
 
-  // Build a small synthetic “trend” series from last N transactions for the banner sparkline
-  const sparkSeries = (() => {
-    if (!(txDb ?? []).length) return [totalBalance, totalBalance];
-    const seq = [...txDb].reverse().map((t) => t.amount);
-    const start = totalBalance - seq.reduce((s, v) => s + v, 0) * 0.4; // softened baseline
-    const acc: number[] = [start];
-    for (let i = 0; i < seq.length; i++) acc.push(acc[acc.length - 1] + seq[i]);
-    return acc.slice(-16);
-  })();
-
-  // >>> SAFE FILTERS (avoid reading .filter on undefined)
-  const bankAccounts = Array.isArray(accounts)
-    ? accounts.filter((a) => a.type !== "INVESTMENT")
-    : [];
-  const investAccounts = Array.isArray(accounts)
-    ? accounts.filter((a) => a.type === "INVESTMENT")
-    : [];
-  const hasInvest = investAccounts.length > 0;
-
-  // If investment accounts exist, include holdings for the InvestSection
   let holdings: ClientHolding[] = [];
   if (hasInvest) {
-    const accountIds = investAccounts.map((a) => a.id);
     const hDb = await prisma.holding.findMany({
-      where: { accountId: { in: accountIds } },
+      where: { accountId: { in: investAccountIds } },
       include: { security: true, account: true },
       orderBy: { updatedAt: "desc" },
     });
@@ -141,6 +145,52 @@ export default async function Dashboard() {
       account: { id: h.account.id, name: h.account.name },
     }));
   }
+
+  // Live valuation by account (cash + holdings market value)
+  const t = Date.now();
+  const holdingsByAccountValueP: Record<string, number> = {};
+  for (const h of holdings) {
+    const sym = h.security.symbol.toUpperCase();
+    const px = serverPriceFor(sym, t);
+    const priceP = Math.round(px * 100);
+    const valueP = Math.round(Number(h.quantity) * priceP);
+    holdingsByAccountValueP[h.accountId] =
+      (holdingsByAccountValueP[h.accountId] || 0) + valueP;
+  }
+
+  const cashTotal = accounts.reduce((s, a) => s + a.balance, 0);
+  const investValue = Object.values(holdingsByAccountValueP).reduce(
+    (s, v) => s + v,
+    0
+  );
+  const netWorth = cashTotal + investValue;
+
+  // Activity + sparkline
+  const txns: ClientTxn[] = (txDb ?? []).slice(0, 12).map((t) => ({
+    id: t.id,
+    postedAt: t.postedAt.toISOString(),
+    description: t.description,
+    amount: t.amount,
+    accountName: t.account.name,
+  }));
+
+  const sparkSeries = (() => {
+    const base = netWorth;
+    if (!(txDb ?? []).length) return [base, base];
+    const seq = [...txDb].reverse().map((t) => t.amount);
+    const start = base - seq.reduce((s, v) => s + v, 0) * 0.2;
+    const acc: number[] = [start];
+    for (let i = 0; i < seq.length; i++) acc.push(acc[acc.length - 1] + seq[i]);
+    return acc.slice(-16);
+  })();
+
+  // Recurring income summary pulls from recent txns
+  const latestReturns = txDb.find((t) =>
+    /Monthly returns/i.test(t.description)
+  );
+  const latestDivs = txDb.find((t) => /Dividends/i.test(t.description));
+  const monthlyReturnsP = latestReturns?.amount ?? 0;
+  const monthlyDividendsP = latestDivs?.amount ?? 0;
 
   return (
     <div className="container py-6 space-y-6">
@@ -162,11 +212,10 @@ export default async function Dashboard() {
           <div>
             <div className="text-sm text-gray-600">Welcome back</div>
             <div className="mt-1 text-2xl md:text-3xl font-semibold text-barclays-navy">
-              Total balance {fmtGBP(totalBalance)}
+              Net worth {fmtGBP(netWorth)}
             </div>
             <div className="mt-2 text-sm text-gray-600">
-              {accounts.length} account{accounts.length === 1 ? "" : "s"} •{" "}
-              {txDb.length} recent transactions • {soCount} standing orders
+              Cash {fmtGBP(cashTotal)} • Investments {fmtGBP(investValue)}
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <Link href="/app/payments" className="btn-primary">
@@ -210,12 +259,22 @@ export default async function Dashboard() {
         </div>
       </div>
 
+      {/* Recurring income summary */}
+      <IncomeSummary
+        returnsP={monthlyReturnsP}
+        dividendsP={monthlyDividendsP}
+        startDateLabel={"7 Jan 2025"}
+      />
+
       {/* Tesla mini market widget */}
       <TeslaChart />
 
-      {/* Investment widgets OR CTA (moved above Recent activity) */}
+      {/* Investment widgets OR CTA */}
       {hasInvest ? (
-        <InvestSection accounts={investAccounts} holdings={holdings} />
+        <InvestSection
+          accounts={accounts.filter((a) => a.type === "INVESTMENT")}
+          holdings={holdings}
+        />
       ) : (
         <section className="card">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -258,21 +317,32 @@ export default async function Dashboard() {
         <div className="mt-3 -mx-4 px-4 md:hidden overflow-x-auto">
           <div className="flex gap-3 pb-2">
             {accounts.length ? (
-              accounts.map((a) => (
-                <Link
-                  key={a.id}
-                  href={`/app/accounts/${a.id}`}
-                  className="min-w-[240px] rounded-2xl border p-4 hover:bg-gray-50"
-                >
-                  <div className="text-sm text-gray-600 truncate">{a.name}</div>
-                  <div className="text-xl font-semibold">
-                    {fmtGBP(a.balance)}
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1 truncate">
-                    {a.number} • {a.currency}
-                  </div>
-                </Link>
-              ))
+              accounts.map((a) => {
+                const holdingsP = holdingsByAccountValueP[a.id] || 0;
+                const isInvest = a.type === "INVESTMENT";
+                const totalP = isInvest ? a.balance + holdingsP : a.balance;
+                return (
+                  <Link
+                    key={a.id}
+                    href={`/app/accounts/${a.id}`}
+                    className="min-w-[240px] rounded-2xl border p-4 hover:bg-gray-50"
+                  >
+                    <div className="text-sm text-gray-600 truncate">
+                      {a.name}
+                    </div>
+                    <div className="text-xl font-semibold">
+                      {fmtGBP(totalP)}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1 truncate">
+                      {isInvest
+                        ? `cash ${fmtGBP(a.balance)} • holdings ${fmtGBP(
+                            holdingsP
+                          )}`
+                        : `${a.number} • ${a.currency}`}
+                    </div>
+                  </Link>
+                );
+              })
             ) : (
               <div className="text-sm text-gray-600">
                 No accounts yet. Create one to get started.
@@ -283,19 +353,28 @@ export default async function Dashboard() {
 
         {/* Tablet/Desktop: responsive grid */}
         <div className="mt-3 hidden md:grid grid-cols-2 lg:grid-cols-3 gap-4">
-          {accounts.map((a) => (
-            <Link
-              key={a.id}
-              href={`/app/accounts/${a.id}`}
-              className="rounded-2xl border p-4 hover:bg-gray-50 min-w-0"
-            >
-              <div className="text-sm text-gray-600 truncate">{a.name}</div>
-              <div className="text-xl font-semibold">{fmtGBP(a.balance)}</div>
-              <div className="text-xs text-gray-500 mt-1 truncate">
-                {a.number} • {a.currency}
-              </div>
-            </Link>
-          ))}
+          {accounts.map((a) => {
+            const holdingsP = holdingsByAccountValueP[a.id] || 0;
+            const isInvest = a.type === "INVESTMENT";
+            const totalP = isInvest ? a.balance + holdingsP : a.balance;
+            return (
+              <Link
+                key={a.id}
+                href={`/app/accounts/${a.id}`}
+                className="rounded-2xl border p-4 hover:bg-gray-50 min-w-0"
+              >
+                <div className="text-sm text-gray-600 truncate">{a.name}</div>
+                <div className="text-xl font-semibold">{fmtGBP(totalP)}</div>
+                <div className="text-xs text-gray-500 mt-1 truncate">
+                  {isInvest
+                    ? `cash ${fmtGBP(a.balance)} • holdings ${fmtGBP(
+                        holdingsP
+                      )}`
+                    : `${a.number} • ${a.currency}`}
+                </div>
+              </Link>
+            );
+          })}
         </div>
       </div>
 

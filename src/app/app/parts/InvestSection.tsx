@@ -1,3 +1,4 @@
+// FILE: src/app/app/parts/InvestSection.tsx
 "use client";
 
 import * as React from "react";
@@ -8,14 +9,14 @@ type ClientAccount = {
   name: string;
   type: string;
   number: string;
-  balance: number; // pence
+  balance: number; // pence (cash)
   currency: string;
 };
 type ClientHolding = {
   id: string;
   accountId: string;
   quantity: number;
-  avgCostP: number;
+  avgCostP: number; // pence
   updatedAt: string;
   security: { symbol: string; name: string; currency: string };
   account: { id: string; name: string };
@@ -23,8 +24,8 @@ type ClientHolding = {
 
 type Quote = {
   symbol: string;
-  priceP: number;
-  changeP: number;
+  priceP: number; // pence
+  changeP: number; // pence
   changePct: number;
   asOf: string;
 };
@@ -45,6 +46,8 @@ const AVAILABLE_SYMBOLS = [
   "BARC",
   "RIO",
   "VOD",
+  "INF",
+  "ENM",
 ];
 
 export default function InvestSection({
@@ -59,10 +62,7 @@ export default function InvestSection({
   const [accs, setAccs] = React.useState<ClientAccount[]>(accounts);
   const [holds, setHolds] = React.useState<ClientHolding[]>(holdings);
 
-  // keep accounts in sync when prop changes
-  React.useEffect(() => {
-    setAccs(accounts || []);
-  }, [accounts]);
+  React.useEffect(() => setAccs(accounts || []), [accounts]);
 
   const heldSyms = React.useMemo(
     () =>
@@ -79,8 +79,7 @@ export default function InvestSection({
     if (!accountId && accs[0]?.id) setAccountId(accs[0].id);
   }, [accs, accountId]);
 
-  const initialSymbol =
-    holds[0]?.security.symbol.toUpperCase() || AVAILABLE_SYMBOLS[0];
+  const initialSymbol = holds[0]?.security.symbol.toUpperCase() || "INF";
   const [selectedSymbol, setSelectedSymbol] =
     React.useState<string>(initialSymbol);
   const [qtyBySymbol, setQtyBySymbol] = React.useState<Record<string, string>>({
@@ -100,10 +99,7 @@ export default function InvestSection({
   }, [heldSyms, selectedSymbol]);
 
   async function loadQuotes() {
-    if (!pollSymbols.length) {
-      setQuotes([]);
-      return;
-    }
+    if (!pollSymbols.length) return setQuotes([]);
     try {
       const res = await fetch("/api/invest/quotes", {
         method: "POST",
@@ -130,6 +126,18 @@ export default function InvestSection({
     return m;
   }, [quotes]);
 
+  // Live portfolio value by account for dropdown (price -> quotes, fallback to avgCost)
+  const totalByAccP = React.useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const h of holds) {
+      const sym = h.security.symbol.toUpperCase();
+      const priceP = qmap[sym]?.priceP ?? h.avgCostP;
+      const valueP = Math.round(Number(h.quantity) * priceP);
+      m[h.accountId] = (m[h.accountId] || 0) + valueP;
+    }
+    return m;
+  }, [holds, qmap]);
+
   function ccy(cur: string) {
     switch (cur) {
       case "USD":
@@ -150,7 +158,6 @@ export default function InvestSection({
     const qtyN = Number(qtyBySymbol[sym] ?? "1");
     if (!(qtyN > 0)) return setError("Enter a valid quantity > 0");
     if (!accountId) return setError("Select an investment account");
-
     const key = `${sym}:${side}`;
     setSubmitting(key);
     try {
@@ -163,7 +170,7 @@ export default function InvestSection({
       const j = await res.json();
       if (!res.ok || !j?.ok) throw new Error(j?.error || "Order failed");
 
-      // 1) update account balance locally
+      // Update cash in the dropdown immediately
       setAccs((prev) =>
         prev.map((a) =>
           a.id === accountId
@@ -172,7 +179,7 @@ export default function InvestSection({
         )
       );
 
-      // 2) immediate price reflection: inject/refresh a quote for the symbol
+      // Inject/refresh quote for the traded symbol so holdings reflect price instantly
       if (j.execPricePence && j.symbol) {
         const upSym = String(j.symbol).toUpperCase();
         setQuotes((prev) => {
@@ -195,11 +202,12 @@ export default function InvestSection({
         });
       }
 
-      // 3) optimistic holdings update using executed price
+      // Optimistic holding quantity update
       const execPriceP = Number(j.execPricePence ?? qmap[sym]?.priceP ?? 0);
       setHolds((prev) => {
         const idx = prev.findIndex(
-          (h) => h.security.symbol.toUpperCase() === sym
+          (h) =>
+            h.security.symbol.toUpperCase() === sym && h.accountId === accountId
         );
         if (side === "BUY") {
           if (idx >= 0) {
@@ -265,7 +273,6 @@ export default function InvestSection({
         ) : (
           <>
             <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {/* Account */}
               <label className="block">
                 <div className="text-xs text-gray-600 mb-1">Account</div>
                 <select
@@ -273,16 +280,20 @@ export default function InvestSection({
                   onChange={(e) => setAccountId(e.target.value)}
                   className="w-full rounded-lg border px-3 py-2"
                 >
-                  {accs.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name} • {a.number.slice(-4)} •{" "}
-                      {fmt(a.balance, a.currency)}
-                    </option>
-                  ))}
+                  {accs.map((a) => {
+                    const portP = totalByAccP[a.id] || 0;
+                    const totalP = a.balance + portP;
+                    return (
+                      <option key={a.id} value={a.id}>
+                        {a.name} • {a.number.slice(-4)} • Cash{" "}
+                        {fmt(a.balance, a.currency)} • Total{" "}
+                        {fmt(totalP, a.currency)}
+                      </option>
+                    );
+                  })}
                 </select>
               </label>
 
-              {/* Symbol list */}
               <label className="block">
                 <div className="text-xs text-gray-600 mb-1">Symbol</div>
                 <select
@@ -302,7 +313,6 @@ export default function InvestSection({
                 </select>
               </label>
 
-              {/* Quantity */}
               <label className="block">
                 <div className="text-xs text-gray-600 mb-1">Quantity</div>
                 <input
@@ -351,11 +361,11 @@ export default function InvestSection({
         ) : null}
       </div>
 
-      {/* Current holdings */}
+      {/* Current holdings (mobile cards + desktop table) */}
       <div className="card">
         <div className="font-semibold text-barclays-navy">Current holdings</div>
 
-        {/* Mobile: horizontal scroller cards */}
+        {/* Mobile: horizontal cards */}
         <div className="-mx-4 px-4 mt-3 overflow-x-auto md:hidden snap-x snap-mandatory">
           <div className="flex gap-3 pb-2">
             {holds.length ? (

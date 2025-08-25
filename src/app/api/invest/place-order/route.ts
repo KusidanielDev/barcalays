@@ -3,23 +3,27 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 
-// price helpers
-function baseFor(sym: string) {
-  const map: Record<string, number> = {
-    AAPL: 189.12,
-    TSLA: 239.55,
-    VUSA: 77.32,
-    LGEN: 2.45,
-    HSBA: 6.9,
-    MSFT: 430.25,
-    AMZN: 171.16,
-    NVDA: 122.55,
-    GOOGL: 168.38,
-  };
-  return map[sym] ?? 100;
-}
+const BASE: Record<string, number> = {
+  AAPL: 189.12,
+  TSLA: 239.55,
+  VUSA: 77.32,
+  LGEN: 2.45,
+  HSBA: 6.9,
+  MSFT: 430.25,
+  AMZN: 171.16,
+  NVDA: 122.55,
+  GOOGL: 168.38,
+  META: 517.57,
+  BP: 4.85,
+  SHEL: 28.72,
+  BARC: 1.45,
+  RIO: 56.12,
+  VOD: 0.72,
+  INF: 8.5,
+  ENM: 9.1,
+};
 function priceFor(sym: string, t: number) {
-  const base = baseFor(sym);
+  const base = BASE[sym] ?? 100;
   const wave = Math.sin(Math.floor(t / 7000)) * 0.5;
   const micro = ((t % 10000) / 10000 - 0.5) * 0.4;
   return Math.max(0.5, base + wave + micro);
@@ -234,7 +238,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       ...result,
-      account: { id: accountId, balance: result.newBalance }, // compatibility
+      account: { id: accountId, balance: result.newBalance },
     });
   } catch (e: any) {
     return NextResponse.json(
