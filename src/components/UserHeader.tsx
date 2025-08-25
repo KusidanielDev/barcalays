@@ -1,10 +1,11 @@
 // FILE: src/components/UserHeader.tsx
 "use client";
+
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { signOut } from "next-auth/react";
+import LogoutButton from "@/components/LogoutButton";
 
 const primary = [
   { href: "/app", label: "Dashboard" },
@@ -43,9 +44,7 @@ const RightIcon = ({
 export default function UserHeader() {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
-  useEffect(() => {
-    setOpen(false);
-  }, [pathname]);
+  useEffect(() => setOpen(false), [pathname]);
 
   return (
     <header className="w-full bg-white border-b border-gray-200">
@@ -58,7 +57,6 @@ export default function UserHeader() {
             height={36}
             className="h-8 w-auto flex-shrink-0"
           />
-          {/* SHOW name on small screens (no hidden), truncate to avoid overlap */}
           <span className="text-base md:text-lg font-semibold text-barclays-navy truncate max-w-[45vw] md:max-w-none">
             Barclays
           </span>
@@ -85,12 +83,8 @@ export default function UserHeader() {
               label="Settings"
               path="M12 15a3 3 0 1 0 0-6m7.4 6a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V22a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H2a2 2 0 1 1 0-4h.09c.65 0 1.24-.39 1.51-1"
             />
-            <button
-              onClick={() => signOut({ callbackUrl: "/" })}
-              className="btn-secondary ml-1"
-            >
-              Logout
-            </button>
+            {/* Send users to your real login page after logout */}
+            <LogoutButton to="/login" className="btn-secondary ml-1" />
           </div>
         </nav>
 
@@ -137,12 +131,7 @@ export default function UserHeader() {
                 </Link>
               </li>
               <li className="mt-2">
-                <button
-                  onClick={() => signOut({ callbackUrl: "/" })}
-                  className="w-full btn-secondary"
-                >
-                  Logout
-                </button>
+                <LogoutButton to="/login" className="w-full btn-secondary" />
               </li>
             </ul>
           </div>
