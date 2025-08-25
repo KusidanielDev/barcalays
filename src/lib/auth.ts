@@ -19,7 +19,9 @@ export const authConfig: NextAuthConfig = {
       },
       async authorize(creds) {
         const email =
-          typeof creds?.email === "string" ? creds.email.trim() : "";
+          typeof creds?.email === "string"
+            ? creds.email.trim().toLowerCase()
+            : "";
         const password =
           typeof creds?.password === "string" ? creds.password : "";
         if (!email || !password) return null;

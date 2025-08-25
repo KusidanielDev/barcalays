@@ -43,7 +43,7 @@ const IconChevron = ({ open }: { open?: boolean }) => (
   <svg
     viewBox="0 0 24 24"
     className={`w-4 h-4 transition-transform ${
-      open ? "rotate-90" : "rotate-0"
+      open ? "rotate-180" : "rotate-90"
     }`}
     fill="none"
     stroke="currentColor"
@@ -231,19 +231,25 @@ const megaData: Mega[] = [
       {
         title: "Investing",
         items: [
-          { label: "Start investing", href: "#" },
-          { label: "Funds & shares", href: "#" },
+          { label: "Start investing", href: "/investments" },
+          { label: "Funds & shares", href: "/investments/funds" },
         ],
       },
       {
         title: "Accounts",
         items: [
-          { label: "Investment ISA", href: "#" },
-          { label: "General Investment", href: "#" },
+          { label: "Investment ISA", href: "/investments/isa" },
+          { label: "General Investment", href: "/investments/gia" },
         ],
       },
-      { title: "Learn", items: [{ label: "Guides & insights", href: "#" }] },
-      { title: "Support", items: [{ label: "Investment help", href: "#" }] },
+      {
+        title: "Learn",
+        items: [{ label: "Risk & fees", href: "/investments/risk-fees" }],
+      },
+      {
+        title: "Support",
+        items: [{ label: "Investment help", href: "/investments" }],
+      },
     ],
   },
   {
@@ -409,7 +415,7 @@ export default function BankHeader() {
           </div>
 
           {/* Right utilities (desktop) */}
-          <div className="hidden md:flex items-center gap-4 text-sm">
+          <div className="hidden md:flex items-center gap-4 text-sm text-[#00AEEF]">
             <a
               href="#"
               className="inline-flex items-center gap-2 hover:underline"
@@ -428,7 +434,10 @@ export default function BankHeader() {
             >
               <IconSearch /> Search
             </a>
-            <a href="/login" className="btn-secondary">
+            <a
+              href="/login"
+              className="inline-flex items-center rounded-full border px-4 py-1.5 text-[#00AEEF] border-[#00AEEF] hover:bg-[#00AEEF] hover:text-white transition"
+            >
               Log in
             </a>
           </div>
@@ -503,7 +512,10 @@ export default function BankHeader() {
           <span className="inline-flex items-center gap-2 text-sm text-barclays-navy">
             <IconSearch /> Search
           </span>
-          <a href="/login" className="btn-primary">
+          <a
+            href="/login"
+            className="inline-flex items-center rounded-full border px-4 py-1.5 text-[#00AEEF] border-[#00AEEF] hover:bg-[#00AEEF] hover:text-white transition"
+          >
             Log in
           </a>
         </div>
@@ -515,7 +527,7 @@ export default function BankHeader() {
           <div className="container py-4">
             {/* Personal dropdown on mobile */}
             <details className="group">
-              <summary className="flex items-center justify-between px-2 py-3 font-semibold cursor-pointer">
+              <summary className="flex items-center justify-between px-2 py-3 font-semibold cursor-pointer text-[#00AEEF]">
                 Personal <IconChevron />
               </summary>
               <div className="pl-4 pb-3 pt-1 space-y-1">
@@ -543,7 +555,7 @@ export default function BankHeader() {
 
             {megaData.map((m) => (
               <details key={m.name} className="group">
-                <summary className="flex items-center justify-between px-2 py-3 font-semibold cursor-pointer">
+                <summary className="flex items-center justify-between px-2 py-3 font-semibold cursor-pointer text-[#00AEEF]">
                   {m.name} <IconChevron />
                 </summary>
                 <div className="pl-4 pb-3 pt-1">
