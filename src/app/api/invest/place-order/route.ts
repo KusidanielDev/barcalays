@@ -1,10 +1,9 @@
-// FILE: src/app/api/invest/place-order/route.ts
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 
-// shared tiny price function (aligns with /api/quotes)
+// price helpers
 function baseFor(sym: string) {
   const map: Record<string, number> = {
     AAPL: 189.12,
@@ -44,10 +43,8 @@ export async function POST(req: Request) {
       side: "BUY" | "SELL";
       quantity: number;
     };
-
-    if (!accountId || !symbol || !side || !quantity || quantity <= 0) {
+    if (!accountId || !symbol || !side || !quantity || quantity <= 0)
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });
-    }
 
     const account = await prisma.account.findFirst({
       where: {
@@ -61,37 +58,30 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
 
     const t = Date.now();
-    const px = priceFor(symbol.toUpperCase(), t);
+    const sym = symbol.toUpperCase();
+    const px = priceFor(sym, t);
     const pxPence = Math.round(px * 100);
     const qty = new Prisma.Decimal(quantity);
-    const notionalP = new Prisma.Decimal(pxPence).mul(qty).toNumber(); // integer pence
+    const notionalP = new Prisma.Decimal(pxPence).mul(qty).toNumber();
     const feeP = Math.max(100, Math.round(notionalP * 0.001)); // £1 min or 0.1%
 
     const security = await prisma.security.upsert({
-      where: { symbol: symbol.toUpperCase() },
+      where: { symbol: sym },
       update: {},
-      create: {
-        symbol: symbol.toUpperCase(),
-        name: symbol.toUpperCase(),
-        currency: "USD",
-        kind: "EQUITY",
-      },
+      create: { symbol: sym, name: sym, currency: "GBP", kind: "EQUITY" },
     });
 
-    const res = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       if (side === "BUY") {
-        if (account.balance < notionalP + feeP) {
+        if (account.balance < notionalP + feeP)
           throw new Error("Insufficient cash");
-        }
 
-        // Adjust cash
         const newBal = account.balance - notionalP - feeP;
         await tx.account.update({
           where: { id: account.id },
           data: { balance: newBal, status: "OPEN" },
         });
 
-        // Upsert holding with weighted average cost
         const existing = await tx.holding.findUnique({
           where: {
             accountId_securityId: {
@@ -100,7 +90,6 @@ export async function POST(req: Request) {
             },
           },
         });
-
         if (!existing) {
           await tx.holding.create({
             data: {
@@ -122,7 +111,6 @@ export async function POST(req: Request) {
           });
         }
 
-        // Record order
         const order = await tx.investOrder.create({
           data: {
             accountId: account.id,
@@ -137,12 +125,14 @@ export async function POST(req: Request) {
           },
         });
 
-        // Cash txn + general txn for dashboard history
         await tx.investCashTxn.create({
           data: {
             accountId: account.id,
             type: "TRADE",
             amountPence: -(notionalP + feeP),
+            note: `BUY ${security.symbol} x ${quantity} @ £${(
+              pxPence / 100
+            ).toFixed(2)}`,
           },
         });
 
@@ -150,7 +140,7 @@ export async function POST(req: Request) {
           data: {
             accountId: account.id,
             postedAt: new Date(),
-            description: `BUY ${security.symbol} x ${quantity} @ $${(
+            description: `BUY ${security.symbol} x ${quantity} @ £${(
               pxPence / 100
             ).toFixed(2)}`,
             amount: -(notionalP + feeP),
@@ -158,78 +148,94 @@ export async function POST(req: Request) {
           },
         });
 
-        return { orderId: order.id, newBalance: newBal };
-      } else {
-        // SELL
-        const holding = await tx.holding.findUnique({
-          where: {
-            accountId_securityId: {
-              accountId: account.id,
-              securityId: security.id,
-            },
-          },
-        });
-        if (!holding) throw new Error("No position");
+        return {
+          orderId: order.id,
+          newBalance: newBal,
+          symbol: sym,
+          execPricePence: pxPence,
+        };
+      }
 
-        const haveQty = new Prisma.Decimal(holding.quantity);
-        if (haveQty.lessThan(qty)) throw new Error("Not enough quantity");
-
-        const newQty = haveQty.sub(qty);
-        if (newQty.lessThanOrEqualTo(0)) {
-          await tx.holding.delete({ where: { id: holding.id } });
-        } else {
-          await tx.holding.update({
-            where: { id: holding.id },
-            data: { quantity: newQty },
-          });
-        }
-
-        const proceedsP = notionalP - feeP;
-        const newBal = account.balance + proceedsP;
-        await tx.account.update({
-          where: { id: account.id },
-          data: { balance: newBal, status: "OPEN" },
-        });
-
-        const order = await tx.investOrder.create({
-          data: {
+      // SELL
+      const holding = await tx.holding.findUnique({
+        where: {
+          accountId_securityId: {
             accountId: account.id,
             securityId: security.id,
-            side: "SELL",
-            orderType: "MARKET",
-            quantity: qty,
-            limitPence: null,
-            status: "FILLED",
-            feePence: feeP,
-            estCostPence: proceedsP,
           },
-        });
+        },
+      });
+      if (!holding) throw new Error("No position");
+      const haveQty = new Prisma.Decimal(holding.quantity);
+      if (haveQty.lessThan(qty)) throw new Error("Not enough quantity");
 
-        await tx.investCashTxn.create({
-          data: {
-            accountId: account.id,
-            type: "TRADE",
-            amountPence: proceedsP,
-          },
+      const newQty = haveQty.sub(qty);
+      if (newQty.lessThanOrEqualTo(0)) {
+        await tx.holding.delete({ where: { id: holding.id } });
+      } else {
+        await tx.holding.update({
+          where: { id: holding.id },
+          data: { quantity: newQty },
         });
-
-        await tx.transaction.create({
-          data: {
-            accountId: account.id,
-            postedAt: new Date(),
-            description: `SELL ${security.symbol} x ${quantity} @ $${(
-              pxPence / 100
-            ).toFixed(2)}`,
-            amount: proceedsP,
-            balanceAfter: newBal,
-          },
-        });
-
-        return { orderId: order.id, newBalance: newBal };
       }
+
+      const proceedsP = notionalP - feeP;
+      const newBal = account.balance + proceedsP;
+      await tx.account.update({
+        where: { id: account.id },
+        data: { balance: newBal, status: "OPEN" },
+      });
+
+      const order = await tx.investOrder.create({
+        data: {
+          accountId: account.id,
+          securityId: security.id,
+          side: "SELL",
+          orderType: "MARKET",
+          quantity: qty,
+          limitPence: null,
+          status: "FILLED",
+          feePence: feeP,
+          estCostPence: proceedsP,
+        },
+      });
+
+      await tx.investCashTxn.create({
+        data: {
+          accountId: account.id,
+          type: "TRADE",
+          amountPence: proceedsP,
+          note: `SELL ${security.symbol} x ${quantity} @ £${(
+            pxPence / 100
+          ).toFixed(2)}`,
+        },
+      });
+
+      await tx.transaction.create({
+        data: {
+          accountId: account.id,
+          postedAt: new Date(),
+          description: `SELL ${security.symbol} x ${quantity} @ £${(
+            pxPence / 100
+          ).toFixed(2)}`,
+          amount: proceedsP,
+          balanceAfter: newBal,
+        },
+      });
+
+      return {
+        orderId: order.id,
+        newBalance: newBal,
+        symbol: sym,
+        execPricePence: pxPence,
+      };
     });
 
-    return NextResponse.json({ ok: true, ...res });
+    return NextResponse.json({
+      ok: true,
+      ...result,
+      account: { id: accountId, balance: result.newBalance }, // compatibility
+    });
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message ?? "Order failed" },

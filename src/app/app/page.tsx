@@ -81,7 +81,7 @@ export default async function Dashboard() {
       ])
     : [[], 0, [] as any[]];
 
-  const accounts: ClientAccount[] = accountsDb.map((a) => ({
+  const accounts: ClientAccount[] = (accountsDb ?? []).map((a) => ({
     id: a.id,
     name: a.name,
     type: a.type,
@@ -91,7 +91,7 @@ export default async function Dashboard() {
   }));
 
   const totalBalance = accounts.reduce((s, a) => s + a.balance, 0);
-  const txns: ClientTxn[] = txDb.slice(0, 10).map((t) => ({
+  const txns: ClientTxn[] = (txDb ?? []).slice(0, 10).map((t) => ({
     id: t.id,
     postedAt: t.postedAt.toISOString(),
     description: t.description,
@@ -101,19 +101,21 @@ export default async function Dashboard() {
 
   // Build a small synthetic “trend” series from last N transactions for the banner sparkline
   const sparkSeries = (() => {
-    if (!txDb.length) return [totalBalance, totalBalance];
-    // reverse to oldest → newest
+    if (!(txDb ?? []).length) return [totalBalance, totalBalance];
     const seq = [...txDb].reverse().map((t) => t.amount);
-    // start roughly a few transactions back from total, then add forward
     const start = totalBalance - seq.reduce((s, v) => s + v, 0) * 0.4; // softened baseline
     const acc: number[] = [start];
     for (let i = 0; i < seq.length; i++) acc.push(acc[acc.length - 1] + seq[i]);
-    // clamp and scale a bit so it looks nice
     return acc.slice(-16);
   })();
 
-  const bankAccounts = accounts.filter((a) => a.type !== "INVESTMENT");
-  const investAccounts = accounts.filter((a) => a.type === "INVESTMENT");
+  // >>> SAFE FILTERS (avoid reading .filter on undefined)
+  const bankAccounts = Array.isArray(accounts)
+    ? accounts.filter((a) => a.type !== "INVESTMENT")
+    : [];
+  const investAccounts = Array.isArray(accounts)
+    ? accounts.filter((a) => a.type === "INVESTMENT")
+    : [];
   const hasInvest = investAccounts.length > 0;
 
   // If investment accounts exist, include holdings for the InvestSection
@@ -125,7 +127,7 @@ export default async function Dashboard() {
       include: { security: true, account: true },
       orderBy: { updatedAt: "desc" },
     });
-    holdings = hDb.map((h) => ({
+    holdings = (hDb ?? []).map((h) => ({
       id: h.id,
       accountId: h.accountId,
       quantity: Number(h.quantity as any),
@@ -180,7 +182,7 @@ export default async function Dashboard() {
           </div>
 
           {/* Tiny sparkline on the right */}
-          <div className="md:pr-2">
+          <div className="hidden md:block md:pr-2">
             <svg
               viewBox="0 0 260 64"
               className="w-[260px] h-[64px]"
@@ -199,7 +201,6 @@ export default async function Dashboard() {
                 stroke="#00AEEF"
                 strokeWidth="2"
               />
-              {/* Area fill under line */}
               <path
                 d={sparkPath(sparkSeries) + " L 254 58 L 6 58 Z"}
                 fill="url(#grad)"
@@ -211,6 +212,30 @@ export default async function Dashboard() {
 
       {/* Tesla mini market widget */}
       <TeslaChart />
+
+      {/* Investment widgets OR CTA (moved above Recent activity) */}
+      {hasInvest ? (
+        <InvestSection accounts={investAccounts} holdings={holdings} />
+      ) : (
+        <section className="card">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-xl font-semibold">Start investing</div>
+              <p className="text-gray-700 mt-1">
+                Create an investment account to buy shares and funds.
+              </p>
+            </div>
+            <div className="mt-3 md:mt-0">
+              <Link
+                href="/app/accounts/new?preset=INVESTMENT"
+                className="btn-primary"
+              >
+                Create investment account
+              </Link>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Your accounts strip */}
       <div className="card">
@@ -228,25 +253,49 @@ export default async function Dashboard() {
             </Link>
           </div>
         </div>
-        <div className="mt-3 grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+
+        {/* Mobile: horizontal scroll cards */}
+        <div className="mt-3 -mx-4 px-4 md:hidden overflow-x-auto">
+          <div className="flex gap-3 pb-2">
+            {accounts.length ? (
+              accounts.map((a) => (
+                <Link
+                  key={a.id}
+                  href={`/app/accounts/${a.id}`}
+                  className="min-w-[240px] rounded-2xl border p-4 hover:bg-gray-50"
+                >
+                  <div className="text-sm text-gray-600 truncate">{a.name}</div>
+                  <div className="text-xl font-semibold">
+                    {fmtGBP(a.balance)}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1 truncate">
+                    {a.number} • {a.currency}
+                  </div>
+                </Link>
+              ))
+            ) : (
+              <div className="text-sm text-gray-600">
+                No accounts yet. Create one to get started.
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Tablet/Desktop: responsive grid */}
+        <div className="mt-3 hidden md:grid grid-cols-2 lg:grid-cols-3 gap-4">
           {accounts.map((a) => (
             <Link
               key={a.id}
               href={`/app/accounts/${a.id}`}
-              className="border rounded-2xl p-4 hover:bg-gray-50"
+              className="rounded-2xl border p-4 hover:bg-gray-50 min-w-0"
             >
-              <div className="text-sm text-gray-600">{a.name}</div>
+              <div className="text-sm text-gray-600 truncate">{a.name}</div>
               <div className="text-xl font-semibold">{fmtGBP(a.balance)}</div>
-              <div className="text-xs text-gray-500 mt-1">
+              <div className="text-xs text-gray-500 mt-1 truncate">
                 {a.number} • {a.currency}
               </div>
             </Link>
           ))}
-          {accounts.length === 0 && (
-            <div className="text-sm text-gray-600">
-              No accounts yet. Create one to get started.
-            </div>
-          )}
         </div>
       </div>
 
@@ -281,30 +330,8 @@ export default async function Dashboard() {
         </div>
       </section>
 
-      {/* Investment widgets OR CTA */}
-      {hasInvest ? (
-        <InvestSection accounts={investAccounts} holdings={holdings} />
-      ) : (
-        <section className="card">
-          <div className="md:flex items-center justify-between">
-            <div>
-              <div className="text-xl font-semibold">Start investing</div>
-              <p className="text-gray-700 mt-1">
-                Create an investment account to buy shares and funds.
-              </p>
-            </div>
-            <a
-              href="/app/accounts/new?preset=INVESTMENT"
-              className="btn-primary mt-3 md:mt-0"
-            >
-              Create investment account
-            </a>
-          </div>
-        </section>
-      )}
-
-      {/* Feature tiles (Loans, Cards, etc.) */}
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Feature tiles */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Link href="/app/payments" className="card hover:bg-gray-50">
           <div className="font-semibold text-barclays-navy">Payments</div>
           <div className="text-sm text-gray-600">Send money to anyone.</div>

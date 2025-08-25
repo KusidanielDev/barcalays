@@ -74,7 +74,7 @@ export default function TeslaChart() {
   return (
     <div className="card">
       <div className="flex items-center justify-between">
-        <div className="font-semibold">TSLA (simulated)</div>
+        <div className="font-semibold">TSLA</div>
         <div className="text-sm">
           <span className="font-medium">{fmt.format(last)}</span>{" "}
           <span className={dir}>
@@ -85,9 +85,7 @@ export default function TeslaChart() {
       <svg viewBox="0 0 300 120" className="mt-2 w-full h-[140px]">
         <path d={path} fill="none" stroke="currentColor" strokeWidth="2" />
       </svg>
-      <div className="text-xs text-gray-500">
-        Live price movement (random walk)
-      </div>
+      <div className="text-xs text-gray-500">Live price movement</div>
     </div>
   );
 }
