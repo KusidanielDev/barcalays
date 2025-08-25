@@ -179,8 +179,15 @@ export default function UserHeader() {
               </li>
               <li className="mt-2">
                 <button
-                  onClick={() => signOut({ callbackUrl: "/" })}
-                  className="w-full btn-secondary"
+                  onClick={() =>
+                    signOut({
+                      callbackUrl:
+                        typeof window !== "undefined"
+                          ? new URL("/", window.location.origin).toString()
+                          : "/",
+                    })
+                  }
+                  className="btn-secondary ml-1"
                 >
                   Logout
                 </button>

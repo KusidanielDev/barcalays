@@ -1,8 +1,0 @@
-# netlify.toml
-[build]
-  command = "npm run build"
-  publish = ".next"
-# Netlify auto-detects Next.js & uses the OpenNext adapter.
-# If you ever need to PIN the adapter (not recommended), uncomment:
-# [[plugins]]
-#   package = "@netlify/plugin-nextjs"

@@ -9,25 +9,28 @@ export default async function AppEntry() {
   const session = await auth();
   if (!session?.user?.email) redirect("/login");
 
-  const user = await prisma.user.findUnique({
-    where: { email: session.user.email },
-  });
+  // Be consistent: store & compare emails in lowercase
+  const email = session.user.email.toLowerCase();
+  const user = await prisma.user.findUnique({ where: { email } });
   if (!user) redirect("/login");
 
-  const [bankingCount, investCount] = await Promise.all([
-    prisma.account.count({
-      where: { userId: user.id, NOT: { type: "INVESTMENT" } }, // CURRENT/SAVINGS/anything-not-investment
-    }),
-    prisma.account.count({
-      where: { userId: user.id, type: "INVESTMENT" },
-    }),
-  ]);
+  try {
+    const [bankingCount, investCount] = await prisma.$transaction([
+      prisma.account.count({
+        where: { userId: user.id, NOT: { type: "INVESTMENT" } },
+      }),
+      prisma.account.count({
+        where: { userId: user.id, type: "INVESTMENT" },
+      }),
+    ]);
 
-  // If the user has ANY banking account, send them to banking first.
-  // Otherwise, if they only have investment accounts, send to investments.
-  if (bankingCount > 0) redirect("/app/home");
-  if (investCount > 0) redirect("/app/invest");
+    // Prefer banking if present; otherwise go investment; otherwise open-account
+    if (bankingCount > 0) redirect("/app/home");
+    if (investCount > 0) redirect("/app/invest");
+  } catch (err) {
+    // Show a safe route instead of blowing up the server render
+    console.error("AppEntry routing error", err);
+  }
 
-  // No accounts yet → send to open-account flow (adjust path if different in your app)
   redirect("/app/accounts/new");
 }
