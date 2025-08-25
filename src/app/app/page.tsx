@@ -39,7 +39,7 @@ const fmtGBP = (pence: number) =>
     pence / 100
   );
 
-// simple sparkline from values
+// Sparkline path
 function sparkPath(values: number[], width = 260, height = 64, pad = 6) {
   if (!values.length) return "";
   const min = Math.min(...values);
@@ -118,7 +118,7 @@ export default async function Dashboard() {
     currency: a.currency,
   }));
 
-  // If investment accounts exist, include holdings for InvestSection and valuation
+  // Pull holdings for investment accounts only
   const investAccountIds = accounts
     .filter((a) => a.type === "INVESTMENT")
     .map((a) => a.id);
@@ -184,7 +184,7 @@ export default async function Dashboard() {
     return acc.slice(-16);
   })();
 
-  // Recurring income summary pulls from recent txns
+  // Recurring income summary
   const latestReturns = txDb.find((t) =>
     /Monthly returns/i.test(t.description)
   );
@@ -193,98 +193,126 @@ export default async function Dashboard() {
   const monthlyDividendsP = latestDivs?.amount ?? 0;
 
   return (
-    <div className="container py-6 space-y-6">
-      {/* Top bar: title + live ticker */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-barclays-navy">Dashboard</h1>
-        <StocksTicker
-          symbols={
-            hasInvest && holdings.length
-              ? Array.from(new Set(holdings.map((h) => h.security.symbol)))
-              : ["AAPL", "TSLA", "VUSA", "LGEN", "HSBA"]
-          }
-        />
-      </div>
-
-      {/* Accent banner with sparkline */}
-      <div className="rounded-2xl border border-gray-200 bg-gradient-to-r from-sky-50 to-white px-5 py-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-          <div>
-            <div className="text-sm text-gray-600">Welcome back</div>
-            <div className="mt-1 text-2xl md:text-3xl font-semibold text-barclays-navy">
-              Net worth {fmtGBP(netWorth)}
-            </div>
-            <div className="mt-2 text-sm text-gray-600">
-              Cash {fmtGBP(cashTotal)} • Investments {fmtGBP(investValue)}
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Link href="/app/payments" className="btn-primary">
-                New payment
-              </Link>
-              <Link href="/app/transactions" className="btn-secondary">
-                View all transactions
-              </Link>
-              <Link href="/app/settings" className="btn-secondary">
-                Settings
-              </Link>
-            </div>
-          </div>
-
-          {/* Tiny sparkline on the right */}
-          <div className="hidden md:block md:pr-2">
-            <svg
-              viewBox="0 0 260 64"
-              className="w-[260px] h-[64px]"
-              aria-hidden
-            >
-              <defs>
-                <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#00AEEF" stopOpacity="0.5" />
-                  <stop offset="100%" stopColor="#00AEEF" stopOpacity="0" />
-                </linearGradient>
-              </defs>
-              <rect width="260" height="64" fill="white" rx="10" />
-              <path
-                d={sparkPath(sparkSeries)}
-                fill="none"
-                stroke="#00AEEF"
-                strokeWidth="2"
-              />
-              <path
-                d={sparkPath(sparkSeries) + " L 254 58 L 6 58 Z"}
-                fill="url(#grad)"
-              />
-            </svg>
+    // Outer wrapper: prevent ANY sideways scroll; keep content centered
+    <div className="w-full overflow-x-hidden">
+      {/* Page container with a max width to prevent over-expansion on mobile */}
+      <div className="mx-auto max-w-screen-xl px-4 md:px-6 py-6 space-y-6">
+        {/* Top bar: title + live ticker (ticker is clipped if too wide) */}
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-2xl font-bold text-barclays-navy">Dashboard</h1>
+          <div className="min-w-0 max-w-full overflow-hidden">
+            <StocksTicker
+              symbols={
+                hasInvest && holdings.length
+                  ? Array.from(new Set(holdings.map((h) => h.security.symbol)))
+                  : ["AAPL", "TSLA", "VUSA", "LGEN", "HSBA"]
+              }
+            />
           </div>
         </div>
-      </div>
 
-      {/* Recurring income summary */}
-      <IncomeSummary
-        returnsP={monthlyReturnsP}
-        dividendsP={monthlyDividendsP}
-        startDateLabel={"7 Jan 2025"}
-      />
-
-      {/* Tesla mini market widget */}
-      <TeslaChart />
-
-      {/* Investment widgets OR CTA */}
-      {hasInvest ? (
-        <InvestSection
-          accounts={accounts.filter((a) => a.type === "INVESTMENT")}
-          holdings={holdings}
-        />
-      ) : (
-        <section className="card">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <div className="text-xl font-semibold">Start investing</div>
-              <p className="text-gray-700 mt-1">
-                Create an investment account to buy shares and funds.
-              </p>
+        {/* Accent banner with sparkline */}
+        <div className="rounded-2xl border border-gray-200 bg-gradient-to-r from-sky-50 to-white px-5 py-6 overflow-hidden">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+            <div className="min-w-0">
+              <div className="text-sm text-gray-600">Welcome back</div>
+              <div className="mt-1 text-2xl md:text-3xl font-semibold text-barclays-navy">
+                Net worth {fmtGBP(netWorth)}
+              </div>
+              <div className="mt-2 text-sm text-gray-600">
+                Cash {fmtGBP(cashTotal)} • Investments {fmtGBP(investValue)}
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Link href="/app/payments" className="btn-primary">
+                  New payment
+                </Link>
+                <Link href="/app/transactions" className="btn-secondary">
+                  View all transactions
+                </Link>
+                <Link href="/app/settings" className="btn-secondary">
+                  Settings
+                </Link>
+              </div>
             </div>
-            <div className="mt-3 md:mt-0">
+
+            {/* Tiny sparkline on the right */}
+            <div className="hidden md:block md:pr-2">
+              <svg
+                viewBox="0 0 260 64"
+                className="w-[260px] h-[64px]"
+                aria-hidden
+              >
+                <defs>
+                  <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#00AEEF" stopOpacity="0.5" />
+                    <stop offset="100%" stopColor="#00AEEF" stopOpacity="0" />
+                  </linearGradient>
+                </defs>
+                <rect width="260" height="64" fill="white" rx="10" />
+                <path
+                  d={sparkPath(sparkSeries)}
+                  fill="none"
+                  stroke="#00AEEF"
+                  strokeWidth="2"
+                />
+                <path
+                  d={sparkPath(sparkSeries) + " L 254 58 L 6 58 Z"}
+                  fill="url(#grad)"
+                />
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        {/* Recurring income summary */}
+        <IncomeSummary
+          returnsP={monthlyReturnsP}
+          dividendsP={monthlyDividendsP}
+          startDateLabel={"7 Jan 2025"}
+        />
+
+        {/* Tesla mini market widget */}
+        <div className="overflow-hidden rounded-2xl">
+          <TeslaChart />
+        </div>
+
+        {/* Investment widgets OR CTA */}
+        {hasInvest ? (
+          <InvestSection
+            accounts={accounts.filter((a) => a.type === "INVESTMENT")}
+            holdings={holdings}
+          />
+        ) : (
+          <section className="card overflow-hidden">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="min-w-0">
+                <div className="text-xl font-semibold">Start investing</div>
+                <p className="text-gray-700 mt-1">
+                  Create an investment account to buy shares and funds.
+                </p>
+              </div>
+              <div className="mt-3 md:mt-0">
+                <Link
+                  href="/app/accounts/new?preset=INVESTMENT"
+                  className="btn-primary"
+                >
+                  Create investment account
+                </Link>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Your accounts strip */}
+        <div className="card overflow-hidden">
+          <div className="flex items-center justify-between gap-2">
+            <div className="font-semibold text-barclays-navy">
+              Your accounts
+            </div>
+            <div className="flex gap-2">
+              <Link href="/app/accounts/new" className="btn-secondary">
+                Open new account
+              </Link>
               <Link
                 href="/app/accounts/new?preset=INVESTMENT"
                 className="btn-primary"
@@ -293,162 +321,155 @@ export default async function Dashboard() {
               </Link>
             </div>
           </div>
-        </section>
-      )}
 
-      {/* Your accounts strip */}
-      <div className="card">
-        <div className="flex items-center justify-between">
-          <div className="font-semibold text-barclays-navy">Your accounts</div>
-          <div className="flex gap-2">
-            <Link href="/app/accounts/new" className="btn-secondary">
-              Open new account
-            </Link>
-            <Link
-              href="/app/accounts/new?preset=INVESTMENT"
-              className="btn-primary"
+          {/* Mobile: horizontal scroll cards (contained) */}
+          <div className="mt-3 md:hidden">
+            <div
+              className="overflow-x-auto overscroll-x-contain touch-pan-x"
+              style={{ WebkitOverflowScrolling: "touch" }}
             >
-              Create investment account
-            </Link>
+              <div className="flex gap-3 pb-2">
+                {accounts.length ? (
+                  accounts.map((a) => {
+                    const holdingsP = holdingsByAccountValueP[a.id] || 0;
+                    const isInvest = a.type === "INVESTMENT";
+                    const totalP = isInvest ? a.balance + holdingsP : a.balance;
+                    return (
+                      <Link
+                        key={a.id}
+                        href={`/app/accounts/${a.id}`}
+                        className="flex-shrink-0 w-64 rounded-2xl border p-4 hover:bg-gray-50"
+                      >
+                        <div className="text-sm text-gray-600 truncate">
+                          {a.name}
+                        </div>
+                        <div className="text-xl font-semibold">
+                          {fmtGBP(totalP)}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1 truncate">
+                          {isInvest
+                            ? `cash ${fmtGBP(a.balance)} • holdings ${fmtGBP(
+                                holdingsP
+                              )}`
+                            : `${a.number} • ${a.currency}`}
+                        </div>
+                      </Link>
+                    );
+                  })
+                ) : (
+                  <div className="text-sm text-gray-600">
+                    No accounts yet. Create one to get started.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Tablet/Desktop: grid (no overflow) */}
+          <div className="mt-3 hidden md:grid grid-cols-2 lg:grid-cols-3 gap-4">
+            {accounts.map((a) => {
+              const holdingsP = holdingsByAccountValueP[a.id] || 0;
+              const isInvest = a.type === "INVESTMENT";
+              const totalP = isInvest ? a.balance + holdingsP : a.balance;
+              return (
+                <Link
+                  key={a.id}
+                  href={`/app/accounts/${a.id}`}
+                  className="rounded-2xl border p-4 hover:bg-gray-50 min-w-0"
+                >
+                  <div className="text-sm text-gray-600 truncate">{a.name}</div>
+                  <div className="text-xl font-semibold">{fmtGBP(totalP)}</div>
+                  <div className="text-xs text-gray-500 mt-1 truncate">
+                    {isInvest
+                      ? `cash ${fmtGBP(a.balance)} • holdings ${fmtGBP(
+                          holdingsP
+                        )}`
+                      : `${a.number} • ${a.currency}`}
+                  </div>
+                </Link>
+              );
+            })}
           </div>
         </div>
 
-        {/* Mobile: horizontal scroll cards */}
-        <div className="mt-3 -mx-4 px-4 md:hidden overflow-x-auto">
-          <div className="flex gap-3 pb-2">
-            {accounts.length ? (
-              accounts.map((a) => {
-                const holdingsP = holdingsByAccountValueP[a.id] || 0;
-                const isInvest = a.type === "INVESTMENT";
-                const totalP = isInvest ? a.balance + holdingsP : a.balance;
-                return (
-                  <Link
-                    key={a.id}
-                    href={`/app/accounts/${a.id}`}
-                    className="min-w-[240px] rounded-2xl border p-4 hover:bg-gray-50"
+        {/* Recent activity */}
+        <section className="card overflow-hidden">
+          <div className="font-semibold mb-3">Recent activity</div>
+          <div className="divide-y">
+            {txns.length ? (
+              txns.map((t) => (
+                <div
+                  key={t.id}
+                  className="py-2 flex items-center justify-between"
+                >
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{t.description}</div>
+                    <div className="text-xs text-gray-500">
+                      {new Date(t.postedAt).toLocaleString()} · {t.accountName}
+                    </div>
+                  </div>
+                  <div
+                    className={`font-semibold ${
+                      t.amount < 0 ? "text-red-600" : "text-green-700"
+                    }`}
                   >
-                    <div className="text-sm text-gray-600 truncate">
-                      {a.name}
-                    </div>
-                    <div className="text-xl font-semibold">
-                      {fmtGBP(totalP)}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1 truncate">
-                      {isInvest
-                        ? `cash ${fmtGBP(a.balance)} • holdings ${fmtGBP(
-                            holdingsP
-                          )}`
-                        : `${a.number} • ${a.currency}`}
-                    </div>
-                  </Link>
-                );
-              })
+                    £{(t.amount / 100).toFixed(2)}
+                  </div>
+                </div>
+              ))
             ) : (
               <div className="text-sm text-gray-600">
-                No accounts yet. Create one to get started.
+                No recent transactions
               </div>
             )}
           </div>
-        </div>
+        </section>
 
-        {/* Tablet/Desktop: responsive grid */}
-        <div className="mt-3 hidden md:grid grid-cols-2 lg:grid-cols-3 gap-4">
-          {accounts.map((a) => {
-            const holdingsP = holdingsByAccountValueP[a.id] || 0;
-            const isInvest = a.type === "INVESTMENT";
-            const totalP = isInvest ? a.balance + holdingsP : a.balance;
-            return (
-              <Link
-                key={a.id}
-                href={`/app/accounts/${a.id}`}
-                className="rounded-2xl border p-4 hover:bg-gray-50 min-w-0"
-              >
-                <div className="text-sm text-gray-600 truncate">{a.name}</div>
-                <div className="text-xl font-semibold">{fmtGBP(totalP)}</div>
-                <div className="text-xs text-gray-500 mt-1 truncate">
-                  {isInvest
-                    ? `cash ${fmtGBP(a.balance)} • holdings ${fmtGBP(
-                        holdingsP
-                      )}`
-                    : `${a.number} • ${a.currency}`}
-                </div>
-              </Link>
-            );
-          })}
+        {/* Feature tiles */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Link href="/app/payments" className="card hover:bg-gray-50">
+            <div className="font-semibold text-barclays-navy">Payments</div>
+            <div className="text-sm text-gray-600">Send money to anyone.</div>
+          </Link>
+          <Link href="/app/transactions" className="card hover:bg-gray-50">
+            <div className="font-semibold text-barclays-navy">
+              View all transactions
+            </div>
+            <div className="text-sm text-gray-600">Full history & export.</div>
+          </Link>
+          <Link href="/app/cards" className="card hover:bg-gray-50">
+            <div className="font-semibold text-barclays-navy">Cards</div>
+            <div className="text-sm text-gray-600">
+              Freeze / unfreeze & details.
+            </div>
+          </Link>
+          <Link href="/app/loans" className="card hover:bg-gray-50">
+            <div className="font-semibold text-barclays-navy">Loans</div>
+            <div className="text-sm text-gray-600">
+              Apply & manage repayments.
+            </div>
+          </Link>
+          <Link href="/app/goals" className="card hover:bg-gray-50">
+            <div className="font-semibold text-barclays-navy">Goals</div>
+            <div className="text-sm text-gray-600">Save towards targets.</div>
+          </Link>
+          <Link href="/app/budgets" className="card hover:bg-gray-50">
+            <div className="font-semibold text-barclays-navy">Budgets</div>
+            <div className="text-sm text-gray-600">
+              Set limits & track spend.
+            </div>
+          </Link>
+          <Link href="/app/analytics" className="card hover:bg-gray-50">
+            <div className="font-semibold text-barclays-navy">Analytics</div>
+            <div className="text-sm text-gray-600">Trends & insights.</div>
+          </Link>
+          <Link href="/app/support" className="card hover:bg-gray-50">
+            <div className="font-semibold text-barclays-navy">Support</div>
+            <div className="text-sm text-gray-600">
+              Get help and contact us.
+            </div>
+          </Link>
         </div>
-      </div>
-
-      {/* Recent activity */}
-      <section className="card">
-        <div className="font-semibold mb-3">Recent activity</div>
-        <div className="divide-y">
-          {txns.length ? (
-            txns.map((t) => (
-              <div
-                key={t.id}
-                className="py-2 flex items-center justify-between"
-              >
-                <div>
-                  <div className="font-medium">{t.description}</div>
-                  <div className="text-xs text-gray-500">
-                    {new Date(t.postedAt).toLocaleString()} · {t.accountName}
-                  </div>
-                </div>
-                <div
-                  className={`font-semibold ${
-                    t.amount < 0 ? "text-red-600" : "text-green-700"
-                  }`}
-                >
-                  £{(t.amount / 100).toFixed(2)}
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="text-sm text-gray-600">No recent transactions</div>
-          )}
-        </div>
-      </section>
-
-      {/* Feature tiles */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Link href="/app/payments" className="card hover:bg-gray-50">
-          <div className="font-semibold text-barclays-navy">Payments</div>
-          <div className="text-sm text-gray-600">Send money to anyone.</div>
-        </Link>
-        <Link href="/app/transactions" className="card hover:bg-gray-50">
-          <div className="font-semibold text-barclays-navy">
-            View all transactions
-          </div>
-          <div className="text-sm text-gray-600">Full history & export.</div>
-        </Link>
-        <Link href="/app/cards" className="card hover:bg-gray-50">
-          <div className="font-semibold text-barclays-navy">Cards</div>
-          <div className="text-sm text-gray-600">
-            Freeze / unfreeze & details.
-          </div>
-        </Link>
-        <Link href="/app/loans" className="card hover:bg-gray-50">
-          <div className="font-semibold text-barclays-navy">Loans</div>
-          <div className="text-sm text-gray-600">
-            Apply & manage repayments.
-          </div>
-        </Link>
-        <Link href="/app/goals" className="card hover:bg-gray-50">
-          <div className="font-semibold text-barclays-navy">Goals</div>
-          <div className="text-sm text-gray-600">Save towards targets.</div>
-        </Link>
-        <Link href="/app/budgets" className="card hover:bg-gray-50">
-          <div className="font-semibold text-barclays-navy">Budgets</div>
-          <div className="text-sm text-gray-600">Set limits & track spend.</div>
-        </Link>
-        <Link href="/app/analytics" className="card hover:bg-gray-50">
-          <div className="font-semibold text-barclays-navy">Analytics</div>
-          <div className="text-sm text-gray-600">Trends & insights.</div>
-        </Link>
-        <Link href="/app/support" className="card hover:bg-gray-50">
-          <div className="font-semibold text-barclays-navy">Support</div>
-          <div className="text-sm text-gray-600">Get help and contact us.</div>
-        </Link>
       </div>
     </div>
   );
