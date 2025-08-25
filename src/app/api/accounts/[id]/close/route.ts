@@ -5,11 +5,11 @@ import { prisma } from "../../../../../lib/prisma";
 
 export async function POST(_: Request, { params }: { params: { id: string } }) {
   const session = await auth();
-  if (!session?.user?.email)
+  const email = session?.user?.email?.toLowerCase();
+  if (!email)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const user = await prisma.user.findUnique({
-    where: { email: session.user.email },
-  });
+
+  const user = await prisma.user.findUnique({ where: { email } });
 
   const acct = await prisma.account.findFirst({
     where: { id: params.id, userId: user!.id },

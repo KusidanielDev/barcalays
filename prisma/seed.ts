@@ -1,64 +1,109 @@
+// FILE: prisma/seed.ts (snippet)
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
-
 const prisma = new PrismaClient();
 
-function pence(n: number) { return Math.round(n * 100); }
-function rndAcct() {
-  const num = Math.floor(10_000_000 + Math.random()*89_999_999).toString();
-  return `${num.slice(0,4)}${num.slice(4)}`;
-}
-function rndSortCode() {
-  const n = () => String(Math.floor(Math.random()*90)+10);
-  return `${n()}-${n()}-${n()}`;
-}
 async function main() {
-  await prisma.transaction.deleteMany();
-  await prisma.account.deleteMany();
-  await prisma.session.deleteMany();
-  await prisma.user.deleteMany();
+  const email = "demo_investor@barclays.local";
+  const plain = "DemoInvestor123!";
+  const passwordHash = await bcrypt.hash(plain, 10);
 
-  const pw = await bcrypt.hash("password123", 10);
-
-  const alice = await prisma.user.create({
-    data: { name: "Alice Demo", email: "alice@example.com", passwordHash: pw, role: "USER" }
-  });
-  const bob = await prisma.user.create({
-    data: { name: "Bob Admin", email: "bob@example.com", passwordHash: pw, role: "ADMIN" }
-  });
-
-  const aliceCA = await prisma.account.create({
-    data: {
-      userId: alice.id, name: "Barclays Bank Account", type: "Current",
-      number: rndAcct(), sortCode: rndSortCode(), balance: pence(1234.56)
-    }
-  });
-  const aliceSV = await prisma.account.create({
-    data: {
-      userId: alice.id, name: "Everyday Saver", type: "Savings",
-      number: rndAcct(), sortCode: rndSortCode(), balance: pence(2500.00)
-    }
+  const user = await prisma.user.upsert({
+    where: { email },
+    update: { passwordHash }, // keep in sync if re-seeding
+    create: {
+      email,
+      passwordHash, // <- hashed password for Credentials login
+      name: "Demo Investor",
+      approved: true,
+      status: "APPROVED",
+    },
   });
 
-  // Add a few transactions to current account
-  const txs = [
-    { postedAt: new Date(Date.now()-86400*1000*1), description: "Grocery Mart", amount: -pence(24.80) },
-    { postedAt: new Date(Date.now()-86400*1000*2), description: "Salary", amount:  pence(1500.00) },
-    { postedAt: new Date(Date.now()-86400*1000*3), description: "Coffee Shop", amount: -pence(3.50) },
-    { postedAt: new Date(Date.now()-86400*1000*4), description: "Electric Bill", amount: -pence(60.00) },
-    { postedAt: new Date(Date.now()-86400*1000*5), description: "Mobile Top-up", amount: -pence(10.00) },
-  ];
-  let bal = aliceCA.balance;
-  for (const t of txs.sort((a,b)=>a.postedAt.getTime()-b.postedAt.getTime())) {
-    bal += t.amount;
-    await prisma.transaction.create({
-      data: { accountId: aliceCA.id, postedAt: t.postedAt, description: t.description, amount: t.amount, balanceAfter: bal }
+  // Helper to create an investment account
+  async function upsertAccount(
+    name: string,
+    number: string,
+    balanceP = 2500000
+  ) {
+    return prisma.account.upsert({
+      where: { number },
+      update: {},
+      create: {
+        userId: user.id,
+        name,
+        number,
+        sortCode: "23-45-67",
+        type: "INVESTMENT", // keep your existing types; this just labels it
+        balance: balanceP, // cash pence
+        currency: "GBP",
+        status: "OPEN",
+      },
     });
   }
 
-  console.log("Seed complete. Users:");
-  console.log("- alice@example.com / password123 (USER)");
-  console.log("- bob@example.com   / password123 (ADMIN)");
+  const isa = await upsertAccount("Stocks & Shares ISA", "SI-000111");
+  const gia = await upsertAccount(
+    "General Investment Account",
+    "GI-000222",
+    1500000
+  );
+  const sipp = await upsertAccount("SIPP", "SP-000333", 5000000);
+
+  // Securities
+  const tickers = [
+    { symbol: "AAPL", name: "Apple Inc.", currency: "USD" },
+    { symbol: "TSLA", name: "Tesla, Inc.", currency: "USD" },
+    { symbol: "VUSA", name: "Vanguard S&P 500 UCITS ETF", currency: "GBP" },
+    { symbol: "LGEN", name: "Legal & General Group", currency: "GBP" },
+    { symbol: "HSBA", name: "HSBC Holdings", currency: "GBP" },
+  ];
+
+  const secs = await Promise.all(
+    tickers.map((t) =>
+      prisma.security.upsert({
+        where: { symbol: t.symbol },
+        update: {},
+        create: {
+          symbol: t.symbol,
+          name: t.name,
+          currency: t.currency,
+          kind: "EQUITY",
+        },
+      })
+    )
+  );
+
+  // Seed holdings across accounts
+  async function seedHolding(
+    accountId: string,
+    symbol: string,
+    qty: number,
+    avgPence: number
+  ) {
+    const sec = secs.find((s) => s.symbol === symbol)!;
+    await prisma.holding.upsert({
+      where: { accountId_securityId: { accountId, securityId: sec.id } },
+      update: {
+        quantity: qty.toFixed(8) as unknown as any,
+        avgCostP: avgPence,
+      },
+      create: {
+        accountId,
+        securityId: sec.id,
+        quantity: qty.toFixed(8) as unknown as any,
+        avgCostP: avgPence,
+      },
+    });
+  }
+
+  await seedHolding(isa.id, "AAPL", 10, 22000); // £220.00 equiv
+  await seedHolding(isa.id, "VUSA", 15, 7200);
+  await seedHolding(gia.id, "TSLA", 5, 18000);
+  await seedHolding(gia.id, "HSBA", 50, 620);
+  await seedHolding(sipp.id, "LGEN", 100, 230);
+
+  console.log("Seed complete for user:", email);
 }
 
-main().finally(()=>prisma.$disconnect());
+main().finally(() => prisma.$disconnect());

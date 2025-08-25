@@ -1,93 +1,86 @@
 // FILE: src/app/api/signup/route.ts
-import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 
-function genAccountNumber() {
-  return String(Math.floor(1_00000000 + Math.random() * 9_00000000)).padStart(
-    8,
-    "0"
-  );
-}
-const DEFAULT_SORT = "20-00-00";
-
 export async function POST(req: Request) {
-  try {
-    const body = await req.json().catch(() => ({}));
-    const {
-      name = "",
-      email = "",
-      password = "",
-      accountType = "CURRENT",
-    } = body || {};
+  const body = await req.json().catch(() => null);
+  if (!body)
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
 
-    if (!name.trim() || !email.trim() || !password) {
-      return NextResponse.json({ error: "Missing fields" }, { status: 400 });
-    }
+  const {
+    name,
+    email,
+    password,
+    confirmPassword,
+    dob,
+    phone,
+    address,
+    city,
+    postcode,
+    acceptTerms,
+    accountType = "CURRENT",
+  } = body;
 
-    const existing = await prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
-    });
-    if (existing) {
-      return NextResponse.json(
-        { error: "Email already registered" },
-        { status: 400 }
-      );
-    }
-
-    const passwordHash = await bcrypt.hash(password, 10);
-
-    const result = await prisma.$transaction(async (tx) => {
-      // 1) Create user (kept pending/awaiting approval)
-      const user = await tx.user.create({
-        data: {
-          name: name.trim(),
-          email: email.toLowerCase(),
-          passwordHash,
-          approved: false,
-          status: "PENDING",
-        },
-      });
-
-      // 2) Create the EXACT account the user selected
-      const type = String(accountType).toUpperCase();
-      const accountName =
-        type === "SAVINGS"
-          ? "Savings Account"
-          : type === "INVESTMENT"
-          ? "Investment Account"
-          : "Current Account";
-
-      const acct = await tx.account.create({
-        data: {
-          userId: user.id,
-          name: accountName,
-          type, // String in your schema
-          number: genAccountNumber(),
-          sortCode: DEFAULT_SORT,
-          balance: 0, // pence
-          currency: "GBP",
-          status: "PENDING", // matches your schema default
-        },
-      });
-
-      // 3) Audit
-      await tx.auditLog.create({
-        data: {
-          userId: user.id,
-          action: "ACCOUNT_CREATE",
-          meta: JSON.stringify({ accountId: acct.id, type }),
-        },
-      });
-
-      return { userId: user.id, accountId: acct.id };
-    });
-
-    return NextResponse.json(result, { status: 201 });
-  } catch (e: any) {
+  if (!email || !password || !confirmPassword)
+    return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+  if (password !== confirmPassword)
     return NextResponse.json(
-      { error: e?.message || "Signup failed" },
-      { status: 500 }
+      { error: "Passwords do not match" },
+      { status: 400 }
     );
-  }
+  if (!acceptTerms)
+    return NextResponse.json(
+      { error: "Terms must be accepted" },
+      { status: 400 }
+    );
+
+  const emailNorm = String(email).toLowerCase();
+  const exists = await prisma.user.findUnique({ where: { email: emailNorm } });
+  if (exists)
+    return NextResponse.json(
+      { error: "Email already registered" },
+      { status: 409 }
+    );
+
+  const passwordHash = await bcrypt.hash(password, 10);
+
+  const user = await prisma.user.create({
+    data: {
+      name,
+      email: emailNorm,
+      passwordHash,
+      phone,
+      approved: true,
+      status: "APPROVED",
+    },
+  });
+
+  // Create the chosen account
+  const number = `${
+    accountType === "INVESTMENT"
+      ? "GI"
+      : accountType === "SAVINGS"
+      ? "SV"
+      : "CU"
+  }-${Math.floor(100000 + Math.random() * 900000)}`;
+  const acc = await prisma.account.create({
+    data: {
+      userId: user.id,
+      name:
+        accountType === "INVESTMENT"
+          ? "General Investment Account"
+          : accountType === "SAVINGS"
+          ? "Everyday Saver"
+          : "Barclays Bank Account",
+      type: accountType, // CURRENT | SAVINGS | INVESTMENT
+      number,
+      sortCode: "23-45-67",
+      balance: accountType === "INVESTMENT" ? 1000000 : 50000, // £10,000 demo or £500 balance
+      currency: "GBP",
+      status: "OPEN",
+    },
+  });
+
+  return NextResponse.json({ ok: true, userId: user.id, accountId: acc.id });
 }

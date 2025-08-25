@@ -89,3 +89,45 @@ a.underline {
   text-decoration: underline;
   text-underline-offset: 2px; /* same as Tailwind's underline-offset-2 */
 }
+
+.tabs {
+  display: grid;
+  grid-template-columns: auto auto auto auto;
+  align-items: end;
+  gap: 0.5rem;
+}
+.tabs > input {
+  display: none;
+}
+.tabs > label {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-bottom: none;
+  border-radius: 0.5rem 0.5rem 0 0;
+  background: #f8fafc;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+.tabs .tab-content {
+  grid-column: 1/-1;
+  border: 1px solid #e5e7eb;
+  border-radius: 0 0.5rem 0.5rem 0.5rem;
+  background: #fff;
+}
+.tabs section {
+  display: none;
+  padding: 1rem;
+}
+#t1:checked ~ label[for="t1"],
+#t2:checked ~ label[for="t2"],
+#t3:checked ~ label[for="t3"],
+#t4:checked ~ label[for="t4"] {
+  background: #fff;
+}
+#t1:checked ~ .tab-content [data-tab="t1"],
+#t2:checked ~ .tab-content [data-tab="t2"],
+#t3:checked ~ .tab-content [data-tab="t3"],
+#t4:checked ~ .tab-content [data-tab="t4"] {
+  display: block;
+}

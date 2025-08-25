@@ -18,10 +18,9 @@ export const authConfig: NextAuthConfig = {
         password: { label: "Password", type: "password" },
       },
       async authorize(creds) {
-        const email =
-          typeof creds?.email === "string"
-            ? creds.email.trim().toLowerCase()
-            : "";
+        const rawEmail =
+          typeof creds?.email === "string" ? creds.email.trim() : "";
+        const email = rawEmail.toLowerCase(); // 🔸 normalize
         const password =
           typeof creds?.password === "string" ? creds.password : "";
         if (!email || !password) return null;
@@ -29,23 +28,21 @@ export const authConfig: NextAuthConfig = {
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user) return null;
 
-        // Block sign-in until an admin approves the account
         if (!user.approved) {
-          // Your /login page should detect ?error=CallbackRouteError and show the "pending approval" UI.
+          // Your /login page should handle ?error=CallbackRouteError
           throw new Error("NotApproved");
         }
 
         const ok = await bcrypt.compare(password, user.passwordHash);
         if (!ok) return null;
 
-        // Minimal user object persisted into JWT
         return {
           id: user.id,
-          email: user.email,
+          email: user.email, // already lowercased at signup
           name: user.name,
           role: user.role || "USER",
           status: (user as any).status ?? "APPROVED",
-        } as any;
+        };
       },
     }),
   ],
@@ -55,6 +52,9 @@ export const authConfig: NextAuthConfig = {
       if (user) {
         (token as any).role = (user as any).role ?? "USER";
         (token as any).status = (user as any).status ?? "APPROVED";
+        // keep token email lowercased to avoid case drift
+        if ((user as any).email)
+          token.email = String((user as any).email).toLowerCase();
       }
       return token;
     },
@@ -62,12 +62,13 @@ export const authConfig: NextAuthConfig = {
       if (session?.user) {
         (session.user as any).role = (token as any).role ?? "USER";
         (session.user as any).status = (token as any).status ?? "APPROVED";
+        if (token?.email)
+          session.user.email = String(token.email).toLowerCase();
       }
       return session;
     },
   },
 
-  // Optional: record successful sign-ins in AuditLog
   events: {
     async signIn({ user }) {
       try {
@@ -77,7 +78,7 @@ export const authConfig: NextAuthConfig = {
           });
         }
       } catch {
-        // best-effort; ignore failures
+        // best-effort
       }
     },
   },

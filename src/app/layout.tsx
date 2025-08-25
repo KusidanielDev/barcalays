@@ -16,8 +16,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <Tidio />
-        <Providers>{children}</Providers>
+        <Providers>
+          <Tidio />
+          {children}
+        </Providers>
       </body>
     </html>
   );

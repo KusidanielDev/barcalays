@@ -1,13 +1,17 @@
 // FILE: src/components/UserHeader.tsx
 "use client";
-
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 
-type NavItem = { href: string; label: string };
+const primary = [
+  { href: "/app", label: "Dashboard" },
+  { href: "/app/accounts", label: "Accounts" },
+  { href: "/app/transactions", label: "Transactions" },
+  { href: "/app/payments", label: "Payments" },
+];
 
 const RightIcon = ({
   href,
@@ -37,51 +41,11 @@ const RightIcon = ({
 );
 
 export default function UserHeader() {
-  const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const [hasInvest, setHasInvest] = useState<boolean>(false);
-
-  // Close mobile menu on route change
+  const pathname = usePathname();
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
-
-  // Ask the server if this user has an investment account
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const res = await fetch("/api/user/has-investment", {
-          cache: "no-store",
-        });
-        const j = (await res.json()) as { has?: boolean };
-        if (alive) setHasInvest(Boolean(j?.has));
-      } catch {
-        if (alive) setHasInvest(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const primary: NavItem[] = useMemo(() => {
-    const base: NavItem[] = [
-      { href: "/app", label: "Dashboard" },
-      { href: "/app/accounts", label: "Accounts" },
-      { href: "/app/transactions", label: "Transactions" },
-      // NOTE: We intentionally exclude "Investments" by default.
-      { href: "/app/payments", label: "Payments" },
-    ];
-    // Only show Investments tab if the user actually has an investment account
-    return hasInvest
-      ? [
-          ...base.slice(0, 3),
-          { href: "/app/invest", label: "Investments" },
-          base[3],
-        ]
-      : base;
-  }, [hasInvest]);
 
   return (
     <header className="w-full bg-white border-b border-gray-200">
@@ -93,21 +57,19 @@ export default function UserHeader() {
             width={132}
             height={36}
             className="h-8 w-auto flex-shrink-0"
-            priority
           />
+          {/* SHOW name on small screens (no hidden), truncate to avoid overlap */}
           <span className="text-base md:text-lg font-semibold text-barclays-navy truncate max-w-[45vw] md:max-w-none">
             Barclays
           </span>
         </Link>
 
-        {/* Desktop nav */}
         <nav className="hidden lg:flex items-center gap-5">
           {primary.map((i) => (
             <Link
               key={i.href}
               href={i.href}
               className="text-sm font-medium text-barclays-navy hover:underline"
-              aria-current={pathname === i.href ? "page" : undefined}
             >
               {i.label}
             </Link>
@@ -132,7 +94,6 @@ export default function UserHeader() {
           </div>
         </nav>
 
-        {/* Mobile menu button */}
         <button
           onClick={() => setOpen((o) => !o)}
           className="lg:hidden btn-secondary"
@@ -150,7 +111,6 @@ export default function UserHeader() {
         </button>
       </div>
 
-      {/* Mobile drawer */}
       {open && (
         <div className="lg:hidden border-t border-gray-200 bg-white">
           <div className="container py-3">
@@ -160,7 +120,6 @@ export default function UserHeader() {
                   <Link
                     href={i.href}
                     className="flex items-center gap-3 px-2 py-2 rounded hover:bg-gray-50"
-                    aria-current={pathname === i.href ? "page" : undefined}
                   >
                     {i.label}
                   </Link>
@@ -179,15 +138,8 @@ export default function UserHeader() {
               </li>
               <li className="mt-2">
                 <button
-                  onClick={() =>
-                    signOut({
-                      callbackUrl:
-                        typeof window !== "undefined"
-                          ? new URL("/", window.location.origin).toString()
-                          : "/",
-                    })
-                  }
-                  className="btn-secondary ml-1"
+                  onClick={() => signOut({ callbackUrl: "/" })}
+                  className="w-full btn-secondary"
                 >
                   Logout
                 </button>

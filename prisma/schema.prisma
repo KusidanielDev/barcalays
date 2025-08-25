@@ -8,13 +8,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// =========================
+// Core banking models
+// =========================
+
 model User {
   id            String   @id @default(cuid())
   name          String?
   email         String   @unique
   passwordHash  String
   role          String   @default("USER") // "USER" | "ADMIN"
-  approved      Boolean   @default(false) 
+  approved      Boolean  @default(false)
   status        String   @default("APPROVED") // "PENDING" | "APPROVED" | "REJECTED"
   phone         String?
   alertsEnabled Boolean  @default(false)
@@ -44,8 +48,7 @@ model Account {
   balance   Int
   currency  String   @default("GBP")
   createdAt DateTime @default(now())
-
-   status    String   @default("PENDING") // "PENDING" | "OPEN" | "FROZEN" | "CLOSED"
+  status    String   @default("PENDING") // "PENDING" | "OPEN" | "FROZEN" | "CLOSED"
 
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions Transaction[]
@@ -54,6 +57,11 @@ model Account {
   paymentsFrom   Payment[]       @relation("AccountPayments")
   standingOrders StandingOrder[] @relation("AccountStandingOrders")
   cards          Card[]          @relation("AccountCards")
+
+  // Investing back-relations
+  holdings       Holding[]
+  investOrders   InvestOrder[]
+  investCashTxns InvestCashTxn[]
 }
 
 model Transaction {
@@ -106,7 +114,7 @@ model Payment {
   amountPence   Int
   description   String?
   isExternal    Boolean  @default(false)
-  status        String   @default("PENDING_OTP") // e.g., "PENDING_OTP" | "COMPLETED" | "FAILED"
+  status        String   @default("PENDING_OTP") // "PENDING_OTP" | "COMPLETED" | "FAILED"
   createdAt     DateTime @default(now())
   otpCode       String?
 
@@ -221,4 +229,78 @@ model SupportMessage {
   createdAt DateTime @default(now())
 
   thread SupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+}
+
+// =========================
+// Investing (append below)
+// =========================
+
+model Security {
+  id        String   @id @default(cuid())
+  symbol    String   @unique
+  name      String
+  exchange  String?
+  currency  String   @default("GBP")
+  kind      String   @default("EQUITY") // EQUITY | ETF | FUND | BOND | TRUST
+  createdAt DateTime @default(now())
+
+  prices   PricePoint[]
+  holdings Holding[]
+  orders   InvestOrder[]
+}
+
+model PricePoint {
+  id         String   @id @default(cuid())
+  securityId String
+  asOf       DateTime
+  pricePence Int
+
+  security Security @relation(fields: [securityId], references: [id], onDelete: Cascade)
+
+  @@index([securityId, asOf])
+}
+
+model Holding {
+  id         String   @id @default(cuid())
+  accountId  String
+  securityId String
+  quantity   Decimal  @db.Decimal(38, 8)
+  avgCostP   Int
+  updatedAt  DateTime @updatedAt
+
+  account  Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  security Security @relation(fields: [securityId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, securityId])
+}
+
+model InvestOrder {
+  id           String   @id @default(cuid())
+  accountId    String
+  securityId   String
+  side         String   // BUY | SELL
+  orderType    String   // MARKET | LIMIT
+  quantity     Decimal  @db.Decimal(38, 8)
+  limitPence   Int?
+  status       String   @default("PENDING") // PENDING | FILLED | CANCELLED | REJECTED
+  feePence     Int?
+  estCostPence Int?
+  placedAt     DateTime @default(now())
+  filledAt     DateTime?
+
+  account  Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  security Security @relation(fields: [securityId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, placedAt])
+}
+
+model InvestCashTxn {
+  id          String   @id @default(cuid())
+  accountId   String
+  type        String   // DEPOSIT | WITHDRAWAL | DIVIDEND | FEE | INTEREST
+  amountPence Int
+  postedAt    DateTime @default(now())
+  note        String?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 }

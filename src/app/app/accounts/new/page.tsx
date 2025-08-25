@@ -1,90 +1,105 @@
 // FILE: src/app/app/accounts/new/page.tsx
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import * as React from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
-export default function NewAccountPage() {
+export default function OpenAccountPage() {
   const router = useRouter();
-  const [name, setName] = useState("");
-  const [type, setType] = useState<"CURRENT" | "SAVINGS" | "INVESTMENT">(
-    "CURRENT"
+  const sp = useSearchParams();
+  const preset = (sp.get("preset") || "").toUpperCase();
+
+  const [name, setName] = React.useState(
+    preset === "INVESTMENT" ? "Investment Account" : "Everyday Account"
   );
-  const [currency, setCurrency] = useState("GBP");
-  const [pending, setPending] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [type, setType] = React.useState<"CURRENT" | "SAVINGS" | "INVESTMENT">(
+    ["CURRENT", "SAVINGS", "INVESTMENT"].includes(preset)
+      ? (preset as any)
+      : "CURRENT"
+  );
+  const [initial, setInitial] = React.useState("0");
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+  const [ok, setOk] = React.useState<string | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
-    setPending(true);
-    const res = await fetch("/api/accounts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: name || `${type} Account`, type, currency }),
-    });
-    setPending(false);
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      setErr(j.error || "Could not create account");
-      return;
+    setOk(null);
+    setBusy(true);
+    try {
+      const res = await fetch("/api/accounts/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          type,
+          initialDepositPence: Math.round(Number(initial || "0") * 100),
+        }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || "Failed to open account");
+      setOk("Account created");
+      router.push("/app");
+    } catch (e: any) {
+      setErr(e?.message || "Failed");
+    } finally {
+      setBusy(false);
     }
-    // Send the user to proper destination
-    if (type === "INVESTMENT") router.push("/app/invest");
-    else router.push("/app/accounts");
   }
 
   return (
-    <div className="mx-auto max-w-xl px-4 sm:px-6 py-6">
-      <h1 className="text-2xl font-semibold text-[#00395d]">
-        Open a new account
+    <div className="container py-6 max-w-2xl">
+      <h1 className="text-2xl font-bold text-barclays-navy">
+        Open new account
       </h1>
-      <form
-        onSubmit={submit}
-        className="mt-4 space-y-4 rounded-2xl border bg-white p-4"
-      >
+      <form className="mt-4 space-y-4" onSubmit={submit}>
         <div>
-          <label className="block text-sm text-gray-700">Account type</label>
+          <label className="text-sm text-gray-600">Account type</label>
           <select
+            className="mt-1 w-full rounded border px-2 py-1.5"
             value={type}
             onChange={(e) => setType(e.target.value as any)}
-            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
           >
-            <option value="CURRENT">Current</option>
-            <option value="SAVINGS">Savings</option>
-            <option value="INVESTMENT">Investment</option>
+            <option value="CURRENT">Current account</option>
+            <option value="SAVINGS">Savings account</option>
+            <option value="INVESTMENT">Investment account</option>
           </select>
         </div>
+
         <div>
-          <label className="block text-sm text-gray-700">Name</label>
+          <label className="text-sm text-gray-600">Account name</label>
           <input
+            className="mt-1 w-full rounded border px-3 py-2"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={`${type} Account`}
-            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+            placeholder="e.g., Everyday Account"
           />
         </div>
+
         <div>
-          <label className="block text-sm text-gray-700">Currency</label>
-          <select
-            value={currency}
-            onChange={(e) => setCurrency(e.target.value)}
-            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
-          >
-            <option>GBP</option>
-            <option>EUR</option>
-            <option>USD</option>
-          </select>
+          <label className="text-sm text-gray-600">Initial deposit (£)</label>
+          <input
+            inputMode="decimal"
+            className="mt-1 w-full rounded border px-3 py-2"
+            value={initial}
+            onChange={(e) => setInitial(e.target.value)}
+            placeholder="0"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            For investment accounts, this becomes your investing cash.
+          </p>
         </div>
 
         {err && <div className="text-sm text-red-600">{err}</div>}
+        {ok && <div className="text-sm text-green-700">{ok}</div>}
 
         <button
           type="submit"
-          disabled={pending}
-          className="w-full rounded-md bg-[#00395d] px-4 py-2 text-white disabled:opacity-60"
+          disabled={busy}
+          className={`btn-primary ${busy ? "opacity-60" : ""}`}
         >
-          {pending ? "Creating…" : "Create account"}
+          {busy ? "Opening…" : "Open account"}
         </button>
       </form>
     </div>
