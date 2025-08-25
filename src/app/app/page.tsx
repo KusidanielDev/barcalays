@@ -7,7 +7,7 @@ import StocksTicker from "./parts/StocksTicker";
 import TeslaChart from "./parts/TeslaChart";
 import IncomeSummary from "./parts/IncomeSummary";
 
-/** ---------- Types for safe client props ---------- */
+/** ---------- Types ---------- */
 type ClientAccount = {
   id: string;
   name: string;
@@ -20,14 +20,14 @@ type ClientTxn = {
   id: string;
   postedAt: string;
   description: string;
-  amount: number; // pence (+credit, -debit)
+  amount: number; // pence
   accountName: string;
 };
 type ClientHolding = {
   id: string;
   accountId: string;
   quantity: number;
-  avgCostP: number; // pence
+  avgCostP: number;
   updatedAt: string;
   security: { symbol: string; name: string; currency: string };
   account: { id: string; name: string };
@@ -36,10 +36,20 @@ type ClientHolding = {
 /** ---------- Helpers ---------- */
 const fmtGBP = (pence: number) =>
   new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
-    pence / 100
+    (pence ?? 0) / 100
   );
 
-// Sparkline path
+function fmtDT(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function sparkPath(values: number[], width = 260, height = 64, pad = 6) {
   if (!values.length) return "";
   const min = Math.min(...values);
@@ -48,16 +58,13 @@ function sparkPath(values: number[], width = 260, height = 64, pad = 6) {
   const W = width - pad * 2;
   const H = height - pad * 2;
   const step = values.length > 1 ? W / (values.length - 1) : W;
-
   const y = (v: number) => pad + H - ((v - min) / span) * H;
   const x = (i: number) => pad + i * step;
-
   let d = `M ${x(0)} ${y(values[0])}`;
   for (let i = 1; i < values.length; i++) d += ` L ${x(i)} ${y(values[i])}`;
   return d;
 }
 
-// Local price helper (keep in sync with /api/invest/quotes & place-order)
 const BASE: Record<string, number> = {
   AAPL: 189.12,
   TSLA: 239.55,
@@ -91,23 +98,20 @@ export default async function Dashboard() {
     ? await prisma.user.findUnique({ where: { email } })
     : null;
 
-  const [accountsDb, soCount, txDb] = user
+  const [accountsDb, txDb] = user
     ? await Promise.all([
         prisma.account.findMany({
           where: { userId: user.id, status: { in: ["OPEN", "PENDING"] } },
           orderBy: { createdAt: "asc" },
         }),
-        prisma.standingOrder
-          .count({ where: { userId: user.id, active: true } })
-          .catch(() => 0),
         prisma.transaction.findMany({
           where: { account: { userId: user.id } },
           include: { account: true },
           orderBy: { postedAt: "desc" },
-          take: 50,
+          take: 100,
         }),
       ])
-    : [[], 0, [] as any[]];
+    : [[], [] as any[]];
 
   const accounts: ClientAccount[] = (accountsDb ?? []).map((a) => ({
     id: a.id,
@@ -118,7 +122,6 @@ export default async function Dashboard() {
     currency: a.currency,
   }));
 
-  // Pull holdings for investment accounts only
   const investAccountIds = accounts
     .filter((a) => a.type === "INVESTMENT")
     .map((a) => a.id);
@@ -146,7 +149,6 @@ export default async function Dashboard() {
     }));
   }
 
-  // Live valuation by account (cash + holdings market value)
   const t = Date.now();
   const holdingsByAccountValueP: Record<string, number> = {};
   for (const h of holdings) {
@@ -165,7 +167,6 @@ export default async function Dashboard() {
   );
   const netWorth = cashTotal + investValue;
 
-  // Activity + sparkline
   const txns: ClientTxn[] = (txDb ?? []).slice(0, 12).map((t) => ({
     id: t.id,
     postedAt: t.postedAt.toISOString(),
@@ -184,7 +185,6 @@ export default async function Dashboard() {
     return acc.slice(-16);
   })();
 
-  // Recurring income summary
   const latestReturns = txDb.find((t) =>
     /Monthly returns/i.test(t.description)
   );
@@ -193,11 +193,9 @@ export default async function Dashboard() {
   const monthlyDividendsP = latestDivs?.amount ?? 0;
 
   return (
-    // Outer wrapper: prevent ANY sideways scroll; keep content centered
     <div className="w-full overflow-x-hidden">
-      {/* Page container with a max width to prevent over-expansion on mobile */}
       <div className="mx-auto max-w-screen-xl px-4 md:px-6 py-6 space-y-6">
-        {/* Top bar: title + live ticker (ticker is clipped if too wide) */}
+        {/* Header */}
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-2xl font-bold text-barclays-navy">Dashboard</h1>
           <div className="min-w-0 max-w-full overflow-hidden">
@@ -211,7 +209,7 @@ export default async function Dashboard() {
           </div>
         </div>
 
-        {/* Accent banner with sparkline */}
+        {/* Banner */}
         <div className="rounded-2xl border border-gray-200 bg-gradient-to-r from-sky-50 to-white px-5 py-6 overflow-hidden">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
             <div className="min-w-0">
@@ -234,8 +232,6 @@ export default async function Dashboard() {
                 </Link>
               </div>
             </div>
-
-            {/* Tiny sparkline on the right */}
             <div className="hidden md:block md:pr-2">
               <svg
                 viewBox="0 0 260 64"
@@ -264,46 +260,22 @@ export default async function Dashboard() {
           </div>
         </div>
 
-        {/* Recurring income summary */}
+        {/* Income summary */}
         <IncomeSummary
           returnsP={monthlyReturnsP}
           dividendsP={monthlyDividendsP}
           startDateLabel={"7 Jan 2025"}
         />
 
-        {/* Tesla mini market widget */}
+        {/* Tesla chart */}
         <div className="overflow-hidden rounded-2xl">
           <TeslaChart />
         </div>
 
-        {/* Investment widgets OR CTA */}
-        {hasInvest ? (
-          <InvestSection
-            accounts={accounts.filter((a) => a.type === "INVESTMENT")}
-            holdings={holdings}
-          />
-        ) : (
-          <section className="card overflow-hidden">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="min-w-0">
-                <div className="text-xl font-semibold">Start investing</div>
-                <p className="text-gray-700 mt-1">
-                  Create an investment account to buy shares and funds.
-                </p>
-              </div>
-              <div className="mt-3 md:mt-0">
-                <Link
-                  href="/app/accounts/new?preset=INVESTMENT"
-                  className="btn-primary"
-                >
-                  Create investment account
-                </Link>
-              </div>
-            </div>
-          </section>
-        )}
+        {/* Investment widgets — NOW pass ALL accounts so Savings appears in Current holdings */}
+        <InvestSection accountsAll={accounts} holdings={holdings} />
 
-        {/* Your accounts strip */}
+        {/* Your accounts */}
         <div className="card overflow-hidden">
           <div className="flex items-center justify-between gap-2">
             <div className="font-semibold text-barclays-navy">
@@ -322,7 +294,7 @@ export default async function Dashboard() {
             </div>
           </div>
 
-          {/* Mobile: horizontal scroll cards (contained) */}
+          {/* Mobile scroller */}
           <div className="mt-3 md:hidden">
             <div
               className="overflow-x-auto overscroll-x-contain touch-pan-x"
@@ -365,7 +337,7 @@ export default async function Dashboard() {
             </div>
           </div>
 
-          {/* Tablet/Desktop: grid (no overflow) */}
+          {/* Desktop grid */}
           <div className="mt-3 hidden md:grid grid-cols-2 lg:grid-cols-3 gap-4">
             {accounts.map((a) => {
               const holdingsP = holdingsByAccountValueP[a.id] || 0;
@@ -405,7 +377,7 @@ export default async function Dashboard() {
                   <div className="min-w-0">
                     <div className="font-medium truncate">{t.description}</div>
                     <div className="text-xs text-gray-500">
-                      {new Date(t.postedAt).toLocaleString()} · {t.accountName}
+                      {fmtDT(t.postedAt)} · {t.accountName}
                     </div>
                   </div>
                   <div

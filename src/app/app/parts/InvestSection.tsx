@@ -2,12 +2,13 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 type ClientAccount = {
   id: string;
   name: string;
-  type: string;
+  type: string; // "INVESTMENT" | "SAVINGS" | etc.
   number: string;
   balance: number; // pence (cash)
   currency: string;
@@ -51,18 +52,30 @@ const AVAILABLE_SYMBOLS = [
 ];
 
 export default function InvestSection({
-  accounts = [],
+  accountsAll = [],
   holdings = [],
 }: {
-  accounts?: ClientAccount[];
+  accountsAll?: ClientAccount[];
   holdings?: ClientHolding[];
 }) {
   const router = useRouter();
 
-  const [accs, setAccs] = React.useState<ClientAccount[]>(accounts);
+  // separate investment vs non-investment (e.g., Savings)
+  const investAccs = React.useMemo(
+    () => (accountsAll || []).filter((a) => a.type === "INVESTMENT"),
+    [accountsAll]
+  );
+  const cashAccs = React.useMemo(
+    () => (accountsAll || []).filter((a) => a.type !== "INVESTMENT"),
+    [accountsAll]
+  );
+
+  // state
+  const [accs, setAccs] = React.useState<ClientAccount[]>(investAccs);
   const [holds, setHolds] = React.useState<ClientHolding[]>(holdings);
 
-  React.useEffect(() => setAccs(accounts || []), [accounts]);
+  React.useEffect(() => setAccs(investAccs), [investAccs]);
+  React.useEffect(() => setHolds(holdings || []), [holdings]);
 
   const heldSyms = React.useMemo(
     () =>
@@ -126,8 +139,8 @@ export default function InvestSection({
     return m;
   }, [quotes]);
 
-  // Live portfolio value by account for dropdown (price -> quotes, fallback to avgCost)
-  const totalByAccP = React.useMemo(() => {
+  // Live portfolio value (market value) by account (for dropdown totals)
+  const portByAccP = React.useMemo(() => {
     const m: Record<string, number> = {};
     for (const h of holds) {
       const sym = h.security.symbol.toUpperCase();
@@ -138,6 +151,7 @@ export default function InvestSection({
     return m;
   }, [holds, qmap]);
 
+  // currency helpers
   function ccy(cur: string) {
     switch (cur) {
       case "USD":
@@ -150,7 +164,7 @@ export default function InvestSection({
     }
   }
   const fmt = (pence: number, cur: string = "GBP") =>
-    `${ccy(cur)}${(pence / 100).toFixed(2)}`;
+    `${ccy(cur)}${((pence ?? 0) / 100).toFixed(2)}`;
 
   async function place(symRaw: string, side: "BUY" | "SELL") {
     setError(null);
@@ -170,7 +184,7 @@ export default function InvestSection({
       const j = await res.json();
       if (!res.ok || !j?.ok) throw new Error(j?.error || "Order failed");
 
-      // Update cash in the dropdown immediately
+      // Update cash on the chosen investment account
       setAccs((prev) =>
         prev.map((a) =>
           a.id === accountId
@@ -179,7 +193,7 @@ export default function InvestSection({
         )
       );
 
-      // Inject/refresh quote for the traded symbol so holdings reflect price instantly
+      // Ensure traded symbol has a fresh quote
       if (j.execPricePence && j.symbol) {
         const upSym = String(j.symbol).toUpperCase();
         setQuotes((prev) => {
@@ -202,7 +216,7 @@ export default function InvestSection({
         });
       }
 
-      // Optimistic holding quantity update
+      // Optimistic holding update
       const execPriceP = Number(j.execPricePence ?? qmap[sym]?.priceP ?? 0);
       setHolds((prev) => {
         const idx = prev.findIndex(
@@ -220,7 +234,7 @@ export default function InvestSection({
             };
             return [...prev.slice(0, idx), next, ...prev.slice(idx + 1)];
           } else {
-            const acc = accs.find((a) => a.id === accountId)!;
+            const acc = investAccs.find((a) => a.id === accountId)!;
             const newH: ClientHolding = {
               id: `temp-${Date.now()}`,
               accountId,
@@ -260,9 +274,10 @@ export default function InvestSection({
     }
   }
 
+  // ---- UI ----
   return (
     <section className="space-y-4">
-      {/* Quick trade */}
+      {/* Quick trade (investment accounts only) */}
       <div className="card">
         <div className="font-semibold text-barclays-navy">Quick trade</div>
 
@@ -281,7 +296,7 @@ export default function InvestSection({
                   className="w-full rounded-lg border px-3 py-2"
                 >
                   {accs.map((a) => {
-                    const portP = totalByAccP[a.id] || 0;
+                    const portP = portByAccP[a.id] || 0;
                     const totalP = a.balance + portP;
                     return (
                       <option key={a.id} value={a.id}>
@@ -361,67 +376,94 @@ export default function InvestSection({
         ) : null}
       </div>
 
-      {/* Current holdings (mobile cards + desktop table) */}
+      {/* Current holdings (now includes a Cash row/card for each non-investment account, e.g., Savings) */}
       <div className="card">
         <div className="font-semibold text-barclays-navy">Current holdings</div>
 
         {/* Mobile: horizontal cards */}
         <div className="-mx-4 px-4 mt-3 overflow-x-auto md:hidden snap-x snap-mandatory">
           <div className="flex gap-3 pb-2">
-            {holds.length ? (
-              holds.map((h) => {
-                const sym = h.security.symbol.toUpperCase();
-                const q = qmap[sym];
-                const pct = q?.changePct ?? 0;
-                const isUp = pct >= 0;
-                const color = isUp ? "text-green-700" : "text-red-600";
-                const ring = isUp
-                  ? "ring-1 ring-green-200"
-                  : "ring-1 ring-red-200";
-                const priceP = q?.priceP ?? h.avgCostP;
-                const valueP = Math.round(Number(h.quantity) * priceP);
-                return (
-                  <div
-                    key={h.id}
-                    className={`min-w-[260px] snap-center rounded-2xl border p-4 ${ring}`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="font-semibold">{sym}</div>
-                      <div className={`text-xs font-medium ${color}`}>
-                        {isUp ? "▲" : "▼"} {Math.abs(pct).toFixed(2)}%
-                      </div>
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      {h.security.name}
-                    </div>
-                    <div className="mt-2 text-lg font-semibold">
-                      {fmt(priceP, h.security.currency)}{" "}
-                      <span className="text-sm text-gray-500">/sh</span>
-                    </div>
-                    <div className="mt-1 text-sm text-gray-600">
-                      Qty {Number(h.quantity)} • Value{" "}
-                      {fmt(valueP, h.security.currency)}
-                    </div>
-                    <div className="mt-3 flex gap-2">
-                      <button
-                        onClick={() => place(sym, "BUY")}
-                        className="btn-primary"
-                        disabled={!!submitting}
-                      >
-                        Buy
-                      </button>
-                      <button
-                        onClick={() => place(sym, "SELL")}
-                        className="btn-secondary"
-                        disabled={!!submitting}
-                      >
-                        Sell
-                      </button>
+            {/* Equity/fund holdings */}
+            {holds.map((h) => {
+              const sym = h.security.symbol.toUpperCase();
+              const q = qmap[sym];
+              const pct = q?.changePct ?? 0;
+              const isUp = pct >= 0;
+              const color = isUp ? "text-green-700" : "text-red-600";
+              const ring = isUp
+                ? "ring-1 ring-green-200"
+                : "ring-1 ring-red-200";
+              const priceP = q?.priceP ?? h.avgCostP;
+              const valueP = Math.round(Number(h.quantity) * priceP);
+              return (
+                <div
+                  key={h.id}
+                  className={`min-w-[260px] snap-center rounded-2xl border p-4 ${ring}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold">{sym}</div>
+                    <div className={`text-xs font-medium ${color}`}>
+                      {isUp ? "▲" : "▼"} {Math.abs(pct).toFixed(2)}%
                     </div>
                   </div>
-                );
-              })
-            ) : (
+                  <div className="text-sm text-gray-600">{h.security.name}</div>
+                  <div className="mt-2 text-lg font-semibold">
+                    {fmt(priceP, h.security.currency)}{" "}
+                    <span className="text-sm text-gray-500">/sh</span>
+                  </div>
+                  <div className="mt-1 text-sm text-gray-600">
+                    Qty {Number(h.quantity)} • Value{" "}
+                    {fmt(valueP, h.security.currency)}
+                  </div>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      onClick={() => place(sym, "BUY")}
+                      className="btn-primary"
+                      disabled={!!submitting}
+                    >
+                      Buy
+                    </button>
+                    <button
+                      onClick={() => place(sym, "SELL")}
+                      className="btn-secondary"
+                      disabled={!!submitting}
+                    >
+                      Sell
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Cash accounts (e.g., Savings) */}
+            {cashAccs.map((a) => (
+              <div
+                key={`cash-${a.id}`}
+                className="min-w-[260px] snap-center rounded-2xl border p-4 ring-1 ring-sky-200"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="font-semibold">CASH</div>
+                  <div className="text-xs font-medium text-sky-700">Stable</div>
+                </div>
+                <div className="text-sm text-gray-600">{a.name}</div>
+                <div className="mt-2 text-lg font-semibold">
+                  {fmt(a.balance, a.currency)}
+                </div>
+                <div className="mt-1 text-sm text-gray-600">
+                  Account • {a.number}
+                </div>
+                <div className="mt-3">
+                  <Link
+                    href={`/app/accounts/${a.id}`}
+                    className="btn-secondary"
+                  >
+                    View account
+                  </Link>
+                </div>
+              </div>
+            ))}
+
+            {!holds.length && !cashAccs.length && (
               <div className="text-sm text-gray-600">
                 No holdings yet. Use Quick trade to buy your first stock.
               </div>
@@ -431,7 +473,7 @@ export default function InvestSection({
 
         {/* Desktop: table */}
         <div className="mt-3 overflow-x-auto hidden md:block">
-          <table className="min-w-[820px] w-full text-sm">
+          <table className="min-w-[900px] w-full text-sm">
             <thead className="text-left text-gray-500">
               <tr>
                 <th className="py-2">Account</th>
@@ -445,60 +487,82 @@ export default function InvestSection({
               </tr>
             </thead>
             <tbody>
-              {holds.length ? (
-                holds.map((h) => {
-                  const sym = h.security.symbol.toUpperCase();
-                  const q = qmap[sym];
-                  const priceP = q?.priceP ?? h.avgCostP;
-                  const pct = q?.changePct ?? 0;
-                  const isUp = pct >= 0;
-                  const color = isUp ? "text-green-700" : "text-red-600";
-                  const valueP = Math.round(Number(h.quantity) * priceP);
-                  const kBuy = `${sym}:BUY`,
-                    kSell = `${sym}:SELL`;
-                  return (
-                    <tr key={h.id} className="border-t">
-                      <td className="py-2">{h.account.name}</td>
-                      <td className="font-medium">{sym}</td>
-                      <td className="text-right">{Number(h.quantity)}</td>
-                      <td className="text-right">
-                        {fmt(h.avgCostP, h.security.currency)}
-                      </td>
-                      <td className="text-right">
-                        {fmt(priceP, h.security.currency)}
-                      </td>
-                      <td className={`text-right font-medium ${color}`}>
-                        {isUp ? "▲" : "▼"} {Math.abs(pct).toFixed(2)}%
-                      </td>
-                      <td className="text-right">
-                        {fmt(valueP, h.security.currency)}
-                      </td>
-                      <td className="text-right">
-                        <div className="inline-flex items-center gap-2">
-                          <button
-                            onClick={() => place(sym, "BUY")}
-                            disabled={submitting === kBuy}
-                            className={`btn-primary ${
-                              submitting === kBuy ? "opacity-60" : ""
-                            }`}
-                          >
-                            {submitting === kBuy ? "Placing…" : "Buy"}
-                          </button>
-                          <button
-                            onClick={() => place(sym, "SELL")}
-                            disabled={submitting === kSell}
-                            className={`btn-secondary ${
-                              submitting === kSell ? "opacity-60" : ""
-                            }`}
-                          >
-                            {submitting === kSell ? "Placing…" : "Sell"}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              ) : (
+              {/* Equity/fund holdings */}
+              {holds.map((h) => {
+                const sym = h.security.symbol.toUpperCase();
+                const q = qmap[sym];
+                const priceP = q?.priceP ?? h.avgCostP;
+                const pct = q?.changePct ?? 0;
+                const isUp = pct >= 0;
+                const color = isUp ? "text-green-700" : "text-red-600";
+                const valueP = Math.round(Number(h.quantity) * priceP);
+                const kBuy = `${sym}:BUY`,
+                  kSell = `${sym}:SELL`;
+                return (
+                  <tr key={h.id} className="border-t">
+                    <td className="py-2">{h.account.name}</td>
+                    <td className="font-medium">{sym}</td>
+                    <td className="text-right">{Number(h.quantity)}</td>
+                    <td className="text-right">
+                      {fmt(h.avgCostP, h.security.currency)}
+                    </td>
+                    <td className="text-right">
+                      {fmt(priceP, h.security.currency)}
+                    </td>
+                    <td className={`text-right font-medium ${color}`}>
+                      {isUp ? "▲" : "▼"} {Math.abs(pct).toFixed(2)}%
+                    </td>
+                    <td className="text-right">
+                      {fmt(valueP, h.security.currency)}
+                    </td>
+                    <td className="text-right">
+                      <div className="inline-flex items-center gap-2">
+                        <button
+                          onClick={() => place(sym, "BUY")}
+                          disabled={submitting === kBuy}
+                          className={`btn-primary ${
+                            submitting === kBuy ? "opacity-60" : ""
+                          }`}
+                        >
+                          {submitting === kBuy ? "Placing…" : "Buy"}
+                        </button>
+                        <button
+                          onClick={() => place(sym, "SELL")}
+                          disabled={submitting === kSell}
+                          className={`btn-secondary ${
+                            submitting === kSell ? "opacity-60" : ""
+                          }`}
+                        >
+                          {submitting === kSell ? "Placing…" : "Sell"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {/* Cash accounts */}
+              {cashAccs.map((a) => (
+                <tr key={`cash-row-${a.id}`} className="border-t bg-sky-50/40">
+                  <td className="py-2">{a.name}</td>
+                  <td className="font-medium">CASH</td>
+                  <td className="text-right">—</td>
+                  <td className="text-right">—</td>
+                  <td className="text-right">—</td>
+                  <td className="text-right">—</td>
+                  <td className="text-right">{fmt(a.balance, a.currency)}</td>
+                  <td className="text-right">
+                    <Link
+                      href={`/app/accounts/${a.id}`}
+                      className="btn-secondary"
+                    >
+                      View
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+
+              {!holds.length && !cashAccs.length && (
                 <tr>
                   <td colSpan={8} className="py-3 text-gray-600">
                     No holdings yet. Use Quick trade to buy your first stock.
