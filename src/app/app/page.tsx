@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import InvestSection from "./parts/InvestSection";
 import StocksTicker from "./parts/StocksTicker";
-import TeslaChart from "./parts/TeslaChart";
+import StocksMultiChart from "./parts/StocksMultiChart";
 import IncomeSummary from "./parts/IncomeSummary";
 
 /** ---------- Types ---------- */
@@ -267,9 +267,9 @@ export default async function Dashboard() {
           startDateLabel={"7 Jan 2025"}
         />
 
-        {/* Tesla chart */}
+        {/* Market widget: multi-stock switcher */}
         <div className="overflow-hidden rounded-2xl">
-          <TeslaChart />
+          <StocksMultiChart accounts={accounts} />
         </div>
 
         {/* Investment widgets — NOW pass ALL accounts so Savings appears in Current holdings */}

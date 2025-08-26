@@ -1,11 +1,11 @@
 // FILE: prisma/seed-amarisa.cjs
 const { PrismaClient, Prisma } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
-
 const prisma = new PrismaClient();
 
 // ---------- Config ----------
 const GBP = (pounds) => Math.round(pounds * 100);
+
 const AS_OF_TOTAL = 1_360_000; // As of 7 Jan 2025
 const SAVINGS_CASH = 10_000; // Savings Account cash
 const INVEST_EM_CASH = 20_000; // Investment Account EM Ltd cash
@@ -13,13 +13,27 @@ const INVEST_MAIN_CASH = 10_000; // Cash buffer for General Investment
 const INF_TARGET = 800_000; // Target allocation for INF (rest ENM)
 const SORT_CODE = "12-34-56";
 
+// income baselines + variability
+const RETURNS_BASE = 80_000; // pounds
+const RETURNS_JITTER = 0.15; // ±15%
+const RETURNS_MIN = 60_000;
+const RETURNS_MAX = 100_000;
+
+const DIV_BASE = 5_000; // pounds
+const DIV_JITTER = 0.25; // ±25%
+const DIV_MIN = 3_500;
+const DIV_MAX = 6_500;
+
+function clamp(n, lo, hi) {
+  return Math.max(lo, Math.min(hi, n));
+}
+
 function monthsBetweenInclusive(
   startYear,
   startMonthIdx,
   endYear,
   endMonthIdx
 ) {
-  // monthIdx is 0-based (0=Jan)
   const out = [];
   let y = startYear,
     m = startMonthIdx;
@@ -32,6 +46,15 @@ function monthsBetweenInclusive(
     }
   }
   return out;
+}
+
+// deterministic pseudo-random (LCG) so re-running the seed gives same history
+function makeRng(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (1664525 * s + 1013904223) >>> 0;
+    return s / 2 ** 32; // [0,1)
+  };
 }
 
 async function main() {
@@ -131,7 +154,7 @@ async function main() {
     create: { symbol: "ENM", name: "ENM", currency: "GBP", kind: "EQUITY" },
   });
 
-  // Simple price helper
+  // Simple price helper for initial average costs
   const t = Date.now();
   const BASE = { INF: 8.5, ENM: 9.1 };
   const priceFor = (sym) => {
@@ -143,7 +166,7 @@ async function main() {
   const infPxP = GBP(priceFor("INF"));
   const enmPxP = GBP(priceFor("ENM"));
 
-  // Holdings total = Total - cash
+  // Holdings total = Total - cash (savings + EM + investMain buffer)
   const holdingsTotal =
     AS_OF_TOTAL - SAVINGS_CASH - INVEST_EM_CASH - INVEST_MAIN_CASH; // 1,320,000
 
@@ -178,8 +201,16 @@ async function main() {
     },
   });
 
-  // Opening balance transactions dated 7 Jan 2025 (visible & neat)
-  const jan7 = new Date(Date.UTC(2025, 0, 7, 9, 0, 0)); // 7 Jan 2025 09:00 UTC
+  // Opening balance transactions (7 Jan 2025, 09:00)
+  const jan7 = new Date(Date.UTC(2025, 0, 7, 9, 0, 0));
+  // idempotency-ish: delete any prior "Opening balance*" we wrote (optional)
+  await prisma.transaction.deleteMany({
+    where: {
+      accountId: { in: [savings.id, investEM.id, investMain.id] },
+      description: { in: ["Opening balance", "Opening balance (cash buffer)"] },
+    },
+  });
+
   await prisma.transaction.create({
     data: {
       accountId: savings.id,
@@ -208,7 +239,7 @@ async function main() {
     },
   });
 
-  // Monthly income rows from January 2025 → current month (7th at 09:00)
+  // Monthly income rows from January 2025 → current month with variation
   const now = new Date();
   const months = monthsBetweenInclusive(
     2025,
@@ -216,15 +247,49 @@ async function main() {
     now.getFullYear(),
     now.getMonth()
   );
-  for (const { year, month } of months) {
+
+  // clear previous income rows so re-seeding is clean
+  await prisma.transaction.deleteMany({
+    where: {
+      accountId: investMain.id,
+      description: { in: ["Monthly returns", "Dividends"] },
+    },
+  });
+
+  // create variable history
+  const totalMonths = Math.max(1, months.length);
+  for (let i = 0; i < months.length; i++) {
+    const { year, month } = months[i];
     const postedAt = new Date(Date.UTC(year, month, 7, 9, 0, 0));
+
+    // deterministic RNG per (year, month)
+    const seed = year * 100 + (month + 1);
+    const rng = makeRng(seed);
+
+    // gentle drift from -2% → +2% across the whole span
+    const drift = -0.02 + (i / (totalMonths - 1 || 1)) * 0.04;
+
+    const retNoise = (rng() - 0.5) * 2 * RETURNS_JITTER; // [-jitter, +jitter]
+    const divNoise = (rng() - 0.5) * 2 * DIV_JITTER;
+
+    const returnsPounds = clamp(
+      RETURNS_BASE * (1 + drift + retNoise),
+      RETURNS_MIN,
+      RETURNS_MAX
+    );
+    const dividendsPounds = clamp(
+      DIV_BASE * (1 + drift + divNoise),
+      DIV_MIN,
+      DIV_MAX
+    );
+
     await prisma.transaction.create({
       data: {
         accountId: investMain.id,
         postedAt,
         description: "Monthly returns",
-        amount: GBP(80_000),
-        balanceAfter: 0,
+        amount: GBP(Math.round(returnsPounds)),
+        balanceAfter: 0, // informational entry; not altering snapshot cash
       },
     });
     await prisma.transaction.create({
@@ -232,7 +297,7 @@ async function main() {
         accountId: investMain.id,
         postedAt,
         description: "Dividends",
-        amount: GBP(5_000),
+        amount: GBP(Math.round(dividendsPounds)),
         balanceAfter: 0,
       },
     });
