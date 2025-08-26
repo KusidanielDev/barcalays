@@ -114,6 +114,53 @@ async function main() {
       sortCode: SORT_CODE,
     },
   });
+  // Light monthly income history for EM Ltd (small, variable)
+  {
+    const now = new Date();
+    function monthsBetweenInclusive(y0, m0, y1, m1) {
+      const out = [];
+      let y = y0,
+        m = m0;
+      while (y < y1 || (y === y1 && m <= m1)) {
+        out.push({ year: y, month: m });
+        m++;
+        if (m > 11) {
+          m = 0;
+          y++;
+        }
+      }
+      return out;
+    }
+    const months = monthsBetweenInclusive(
+      2025,
+      0,
+      now.getFullYear(),
+      now.getMonth()
+    );
+
+    // idempotent-ish: remove our previous EM Ltd income lines
+    await prisma.transaction.deleteMany({
+      where: { accountId: investEM.id, description: "EM Ltd monthly income" },
+    });
+
+    for (let i = 0; i < months.length; i++) {
+      const { year, month } = months[i];
+      const dt = new Date(Date.UTC(year, month, 7, 10, 0, 0));
+      // vary between £1,500 and £6,000
+      const base = 3500,
+        jitter = 2500;
+      const amt = Math.round(base + Math.sin(i * 1.7) * jitter);
+      await prisma.transaction.create({
+        data: {
+          accountId: investEM.id,
+          postedAt: dt,
+          description: "EM Ltd monthly income",
+          amount: Math.round(amt / 100) * 100 * 100, // round to whole pounds then pence
+          balanceAfter: 0,
+        },
+      });
+    }
+  }
 
   const investMain = await prisma.account.upsert({
     where: { number: "INV-AR-GEN-0001" },

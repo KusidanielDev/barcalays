@@ -5,7 +5,6 @@ import { auth } from "@/lib/auth";
 import InvestSection from "./parts/InvestSection";
 import StocksTicker from "./parts/StocksTicker";
 import StocksMultiChart from "./parts/StocksMultiChart";
-import IncomeSummary from "./parts/IncomeSummary";
 
 /** ---------- Types ---------- */
 type ClientAccount = {
@@ -65,6 +64,7 @@ function sparkPath(values: number[], width = 260, height = 64, pad = 6) {
   return d;
 }
 
+// same anchors used server-side to estimate MV so that totals add up
 const BASE: Record<string, number> = {
   AAPL: 189.12,
   TSLA: 239.55,
@@ -97,6 +97,11 @@ export default async function Dashboard() {
   const user = email
     ? await prisma.user.findUnique({ where: { email } })
     : null;
+
+  const displayName =
+    user?.name ||
+    session?.user?.name ||
+    (email ? email.split("@")[0] : "there");
 
   const [accountsDb, txDb] = user
     ? await Promise.all([
@@ -149,6 +154,7 @@ export default async function Dashboard() {
     }));
   }
 
+  // ----- Totals that add up -----
   const t = Date.now();
   const holdingsByAccountValueP: Record<string, number> = {};
   for (const h of holdings) {
@@ -167,6 +173,7 @@ export default async function Dashboard() {
   );
   const netWorth = cashTotal + investValue;
 
+  // recent tx (buys/sells & incomes appear here)
   const txns: ClientTxn[] = (txDb ?? []).slice(0, 12).map((t) => ({
     id: t.id,
     postedAt: t.postedAt.toISOString(),
@@ -175,6 +182,7 @@ export default async function Dashboard() {
     accountName: t.account.name,
   }));
 
+  // banner sparkline from net worth & history
   const sparkSeries = (() => {
     const base = netWorth;
     if (!(txDb ?? []).length) return [base, base];
@@ -184,13 +192,6 @@ export default async function Dashboard() {
     for (let i = 0; i < seq.length; i++) acc.push(acc[acc.length - 1] + seq[i]);
     return acc.slice(-16);
   })();
-
-  const latestReturns = txDb.find((t) =>
-    /Monthly returns/i.test(t.description)
-  );
-  const latestDivs = txDb.find((t) => /Dividends/i.test(t.description));
-  const monthlyReturnsP = latestReturns?.amount ?? 0;
-  const monthlyDividendsP = latestDivs?.amount ?? 0;
 
   return (
     <div className="w-full overflow-x-hidden">
@@ -213,7 +214,9 @@ export default async function Dashboard() {
         <div className="rounded-2xl border border-gray-200 bg-gradient-to-r from-sky-50 to-white px-5 py-6 overflow-hidden">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
             <div className="min-w-0">
-              <div className="text-sm text-gray-600">Welcome back</div>
+              <div className="text-sm text-gray-600">
+                Welcome back, <span className="font-medium">{displayName}</span>
+              </div>
               <div className="mt-1 text-2xl md:text-3xl font-semibold text-barclays-navy">
                 Net worth {fmtGBP(netWorth)}
               </div>
@@ -260,22 +263,15 @@ export default async function Dashboard() {
           </div>
         </div>
 
-        {/* Income summary */}
-        <IncomeSummary
-          returnsP={monthlyReturnsP}
-          dividendsP={monthlyDividendsP}
-          startDateLabel={"7 Jan 2025"}
-        />
-
-        {/* Market widget: multi-stock switcher */}
+        {/* Market widget: multi-stock switcher (uses passed accounts for trading) */}
         <div className="overflow-hidden rounded-2xl">
           <StocksMultiChart accounts={accounts} />
         </div>
 
-        {/* Investment widgets — NOW pass ALL accounts so Savings appears in Current holdings */}
+        {/* Investment widgets — pass ALL accounts + holdings so totals match across the page */}
         <InvestSection accountsAll={accounts} holdings={holdings} />
 
-        {/* Your accounts */}
+        {/* Your accounts (totals include holdings for investment accounts) */}
         <div className="card overflow-hidden">
           <div className="flex items-center justify-between gap-2">
             <div className="font-semibold text-barclays-navy">
