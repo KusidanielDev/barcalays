@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import InvestSection from "./parts/InvestSection";
 import StocksTicker from "./parts/StocksTicker";
 import StocksMultiChart from "./parts/StocksMultiChart";
+import IncomeSummary from "./parts/IncomeSummary";
 
 /** ---------- Types ---------- */
 type ClientAccount = {
@@ -64,7 +65,7 @@ function sparkPath(values: number[], width = 260, height = 64, pad = 6) {
   return d;
 }
 
-// same anchors used server-side to estimate MV so that totals add up
+/** ---------- Server-side price anchors (match seed/api) ---------- */
 const BASE: Record<string, number> = {
   AAPL: 189.12,
   TSLA: 239.55,
@@ -97,7 +98,6 @@ export default async function Dashboard() {
   const user = email
     ? await prisma.user.findUnique({ where: { email } })
     : null;
-
   const displayName =
     user?.name ||
     session?.user?.name ||
@@ -130,10 +130,9 @@ export default async function Dashboard() {
   const investAccountIds = accounts
     .filter((a) => a.type === "INVESTMENT")
     .map((a) => a.id);
-  const hasInvest = investAccountIds.length > 0;
 
   let holdings: ClientHolding[] = [];
-  if (hasInvest) {
+  if (investAccountIds.length) {
     const hDb = await prisma.holding.findMany({
       where: { accountId: { in: investAccountIds } },
       include: { security: true, account: true },
@@ -154,14 +153,13 @@ export default async function Dashboard() {
     }));
   }
 
-  // ----- Totals that add up -----
+  // ----- Per-account MV so totals add up -----
   const t = Date.now();
   const holdingsByAccountValueP: Record<string, number> = {};
   for (const h of holdings) {
     const sym = h.security.symbol.toUpperCase();
-    const px = serverPriceFor(sym, t);
-    const priceP = Math.round(px * 100);
-    const valueP = Math.round(Number(h.quantity) * priceP);
+    const pxP = Math.round(serverPriceFor(sym, t) * 100);
+    const valueP = Math.round(Number(h.quantity) * pxP);
     holdingsByAccountValueP[h.accountId] =
       (holdingsByAccountValueP[h.accountId] || 0) + valueP;
   }
@@ -173,7 +171,6 @@ export default async function Dashboard() {
   );
   const netWorth = cashTotal + investValue;
 
-  // recent tx (buys/sells & incomes appear here)
   const txns: ClientTxn[] = (txDb ?? []).slice(0, 12).map((t) => ({
     id: t.id,
     postedAt: t.postedAt.toISOString(),
@@ -182,7 +179,6 @@ export default async function Dashboard() {
     accountName: t.account.name,
   }));
 
-  // banner sparkline from net worth & history
   const sparkSeries = (() => {
     const base = netWorth;
     if (!(txDb ?? []).length) return [base, base];
@@ -193,6 +189,14 @@ export default async function Dashboard() {
     return acc.slice(-16);
   })();
 
+  // Latest monthly figures for the IncomeSummary
+  const latestReturns = txDb.find((t) =>
+    /Monthly returns/i.test(t.description)
+  );
+  const latestDivs = txDb.find((t) => /Dividends/i.test(t.description));
+  const monthlyReturnsP = latestReturns?.amount ?? 0;
+  const monthlyDividendsP = latestDivs?.amount ?? 0;
+
   return (
     <div className="w-full overflow-x-hidden">
       <div className="mx-auto max-w-screen-xl px-4 md:px-6 py-6 space-y-6">
@@ -202,7 +206,7 @@ export default async function Dashboard() {
           <div className="min-w-0 max-w-full overflow-hidden">
             <StocksTicker
               symbols={
-                hasInvest && holdings.length
+                holdings.length
                   ? Array.from(new Set(holdings.map((h) => h.security.symbol)))
                   : ["AAPL", "TSLA", "VUSA", "LGEN", "HSBA"]
               }
@@ -263,15 +267,22 @@ export default async function Dashboard() {
           </div>
         </div>
 
-        {/* Market widget: multi-stock switcher (uses passed accounts for trading) */}
+        {/* Income summary */}
+        <IncomeSummary
+          returnsP={monthlyReturnsP}
+          dividendsP={monthlyDividendsP}
+          startDateLabel={"7 Jan 2025"}
+        />
+
+        {/* Market widget: multi-stock switcher (trading uses passed accounts) */}
         <div className="overflow-hidden rounded-2xl">
           <StocksMultiChart accounts={accounts} />
         </div>
 
-        {/* Investment widgets — pass ALL accounts + holdings so totals match across the page */}
+        {/* Investments — pass ALL accounts so cash-only (e.g., EM Ltd) shows under holdings */}
         <InvestSection accountsAll={accounts} holdings={holdings} />
 
-        {/* Your accounts (totals include holdings for investment accounts) */}
+        {/* Your accounts (totals = cash + MV for investment accounts) */}
         <div className="card overflow-hidden">
           <div className="flex items-center justify-between gap-2">
             <div className="font-semibold text-barclays-navy">
@@ -319,7 +330,7 @@ export default async function Dashboard() {
                             ? `cash ${fmtGBP(a.balance)} • holdings ${fmtGBP(
                                 holdingsP
                               )}`
-                            : `${a.number} • ${a.currency}`}
+                            : `${a.number} • {a.currency}`}
                         </div>
                       </Link>
                     );

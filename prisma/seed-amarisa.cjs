@@ -1,95 +1,86 @@
 // FILE: prisma/seed-amarisa.cjs
+/* Run with: node prisma/seed-amarisa.cjs */
 const { PrismaClient, Prisma } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
-const prisma = new PrismaClient();
 
-// ---------- Config ----------
+const prisma = new PrismaClient();
 const GBP = (pounds) => Math.round(pounds * 100);
 
-const AS_OF_TOTAL = 1_360_000; // As of 7 Jan 2025
-const SAVINGS_CASH = 10_000; // Savings Account cash
-const INVEST_EM_CASH = 20_000; // Investment Account EM Ltd cash
-const INVEST_MAIN_CASH = 10_000; // Cash buffer for General Investment
-const INF_TARGET = 800_000; // Target allocation for INF (rest ENM)
-const SORT_CODE = "12-34-56";
-
-// income baselines + variability
-const RETURNS_BASE = 80_000; // pounds
-const RETURNS_JITTER = 0.15; // ±15%
-const RETURNS_MIN = 60_000;
-const RETURNS_MAX = 100_000;
-
-const DIV_BASE = 5_000; // pounds
-const DIV_JITTER = 0.25; // ±25%
-const DIV_MIN = 3_500;
-const DIV_MAX = 6_500;
-
-function clamp(n, lo, hi) {
-  return Math.max(lo, Math.min(hi, n));
+/** ---------- Price anchors (match your server/UI) ---------- */
+const BASE = {
+  AAPL: 189.12,
+  TSLA: 239.55,
+  VUSA: 77.32,
+  LGEN: 2.45,
+  HSBA: 6.9,
+  MSFT: 430.25,
+  AMZN: 171.16,
+  NVDA: 122.55,
+  GOOGL: 168.38,
+  META: 517.57,
+  BP: 4.85,
+  SHEL: 28.72,
+  BARC: 1.45,
+  RIO: 56.12,
+  VOD: 0.72,
+  INF: 8.5,
+  ENM: 9.1,
+};
+function priceFor(sym, t) {
+  const base = BASE[sym] ?? 100;
+  const wave = Math.sin(Math.floor(t / 7000)) * 0.5;
+  const micro = ((t % 10000) / 10000 - 0.5) * 0.4;
+  return Math.max(0.5, base + wave + micro);
 }
 
-function monthsBetweenInclusive(
-  startYear,
-  startMonthIdx,
-  endYear,
-  endMonthIdx
-) {
+/** ---------- Helpers ---------- */
+function monthsFromJanToNow() {
   const out = [];
-  let y = startYear,
-    m = startMonthIdx;
-  while (y < endYear || (y === endYear && m <= endMonthIdx)) {
-    out.push({ year: y, month: m });
-    m++;
-    if (m > 11) {
-      m = 0;
-      y++;
-    }
+  const now = new Date();
+  for (let m = 0; ; m++) {
+    const d = new Date(Date.UTC(2025, m, 7, 10, 0, 0)); // 7th each month
+    if (d > now) break;
+    out.push(d);
   }
+  if (!out.length) throw new Error("No months from Jan 2025 to now.");
   return out;
 }
-
-// deterministic pseudo-random (LCG) so re-running the seed gives same history
-function makeRng(seed) {
-  let s = seed >>> 0;
-  return () => {
-    s = (1664525 * s + 1013904223) >>> 0;
-    return s / 2 ** 32; // [0,1)
-  };
-}
+const fee = (notionalP) => Math.max(100, Math.round(notionalP * 0.001)); // £1 or 0.1%
+const lerp = (a, b, t) => a + (b - a) * t;
 
 async function main() {
+  // --- USER ---
   const email = "amarisaaryee963@gmail.com";
   const name = "Amarisa Aryee";
-  const password = "Amarisa007";
-  const passwordHash = await bcrypt.hash(password, 10);
+  const rawPassword = "Amarisa007";
+  const passwordHash = await bcrypt.hash(rawPassword, 10);
 
-  // User
   const user = await prisma.user.upsert({
     where: { email },
-    update: {},
+    update: { name },
     create: { email, name, passwordHash },
   });
 
-  // Accounts
+  // --- ACCOUNTS (no opening txns; we set balances directly) ---
   const savings = await prisma.account.upsert({
     where: { number: "SAV-AR-0001" },
     update: {
       userId: user.id,
-      balance: GBP(SAVINGS_CASH),
       name: "Savings Account",
       type: "SAVINGS",
       currency: "GBP",
       status: "OPEN",
+      balance: GBP(120_000), // bump to lift net worth into 1.5–1.6M
     },
     create: {
       userId: user.id,
+      sortCode: "20-00-00",
       number: "SAV-AR-0001",
       name: "Savings Account",
       type: "SAVINGS",
       currency: "GBP",
       status: "OPEN",
-      balance: GBP(SAVINGS_CASH),
-      sortCode: SORT_CODE,
+      balance: GBP(120_000),
     },
   });
 
@@ -97,76 +88,28 @@ async function main() {
     where: { number: "INV-AR-EM-0001" },
     update: {
       userId: user.id,
-      balance: GBP(INVEST_EM_CASH),
       name: "Investment Account EM Ltd",
       type: "INVESTMENT",
       currency: "GBP",
       status: "OPEN",
+      balance: GBP(20_000),
     },
     create: {
       userId: user.id,
+      sortCode: "20-00-00",
       number: "INV-AR-EM-0001",
       name: "Investment Account EM Ltd",
       type: "INVESTMENT",
       currency: "GBP",
       status: "OPEN",
-      balance: GBP(INVEST_EM_CASH),
-      sortCode: SORT_CODE,
+      balance: GBP(20_000),
     },
   });
-  // Light monthly income history for EM Ltd (small, variable)
-  {
-    const now = new Date();
-    function monthsBetweenInclusive(y0, m0, y1, m1) {
-      const out = [];
-      let y = y0,
-        m = m0;
-      while (y < y1 || (y === y1 && m <= m1)) {
-        out.push({ year: y, month: m });
-        m++;
-        if (m > 11) {
-          m = 0;
-          y++;
-        }
-      }
-      return out;
-    }
-    const months = monthsBetweenInclusive(
-      2025,
-      0,
-      now.getFullYear(),
-      now.getMonth()
-    );
-
-    // idempotent-ish: remove our previous EM Ltd income lines
-    await prisma.transaction.deleteMany({
-      where: { accountId: investEM.id, description: "EM Ltd monthly income" },
-    });
-
-    for (let i = 0; i < months.length; i++) {
-      const { year, month } = months[i];
-      const dt = new Date(Date.UTC(year, month, 7, 10, 0, 0));
-      // vary between £1,500 and £6,000
-      const base = 3500,
-        jitter = 2500;
-      const amt = Math.round(base + Math.sin(i * 1.7) * jitter);
-      await prisma.transaction.create({
-        data: {
-          accountId: investEM.id,
-          postedAt: dt,
-          description: "EM Ltd monthly income",
-          amount: Math.round(amt / 100) * 100 * 100, // round to whole pounds then pence
-          balanceAfter: 0,
-        },
-      });
-    }
-  }
 
   const investMain = await prisma.account.upsert({
     where: { number: "INV-AR-GEN-0001" },
     update: {
       userId: user.id,
-      balance: GBP(INVEST_MAIN_CASH),
       name: "General Investment (Informa PLC & ENM)",
       type: "INVESTMENT",
       currency: "GBP",
@@ -174,17 +117,17 @@ async function main() {
     },
     create: {
       userId: user.id,
+      sortCode: "20-00-00",
       number: "INV-AR-GEN-0001",
       name: "General Investment (Informa PLC & ENM)",
       type: "INVESTMENT",
       currency: "GBP",
       status: "OPEN",
-      balance: GBP(INVEST_MAIN_CASH),
-      sortCode: SORT_CODE,
+      balance: 0,
     },
   });
 
-  // Securities
+  // --- SECURITIES ---
   const INF = await prisma.security.upsert({
     where: { symbol: "INF" },
     update: {},
@@ -201,162 +144,235 @@ async function main() {
     create: { symbol: "ENM", name: "ENM", currency: "GBP", kind: "EQUITY" },
   });
 
-  // Simple price helper for initial average costs
-  const t = Date.now();
-  const BASE = { INF: 8.5, ENM: 9.1 };
-  const priceFor = (sym) => {
-    const wave = Math.sin(Math.floor(t / 7000)) * 0.5;
-    const micro = ((t % 10000) / 10000 - 0.5) * 0.4;
-    const px = (BASE[sym] ?? 100) + wave + micro;
-    return Math.max(0.5, px);
+  // Clear past data so this is idempotent for these accounts
+  await prisma.holding.deleteMany({
+    where: { accountId: { in: [investMain.id, investEM.id] } },
+  });
+  await prisma.transaction.deleteMany({
+    where: { accountId: { in: [savings.id, investMain.id, investEM.id] } },
+  });
+  await prisma.investOrder.deleteMany({
+    where: { accountId: { in: [investMain.id, investEM.id] } },
+  });
+  await prisma.investCashTxn.deleteMany({
+    where: { accountId: { in: [investMain.id, investEM.id] } },
+  });
+
+  // =========================
+  // GENERAL INVESTMENT PLAN
+  // =========================
+  // EXACT total (cash + MV) target:
+  const totalTargetGBP = 1_415_896;
+  const totalTargetP = GBP(totalTargetGBP);
+
+  const months = monthsFromJanToNow();
+  const N = months.length;
+  const LAST = N - 1;
+
+  // Gradual growth: start modest and ramp up to your exact latest values
+  const returnsP = Array(N).fill(0);
+  const divsP = Array(N).fill(0);
+  for (let i = 0; i < N; i++) {
+    const t = N === 1 ? 1 : i / (N - 1);
+    const r = i === LAST ? 86845 : Math.round(lerp(35000, 85000, t)); // ramp to just under 86,845
+    const d = i === LAST ? 5142 : Math.round(lerp(2800, 5000, t)); // ramp to just under 5,142
+    returnsP[i] = GBP(r);
+    divsP[i] = GBP(d);
+  }
+
+  // Invest monthly on the 10th: ~70% of available cash; split 60/40 INF/ENM.
+  let runningCash = 0;
+  const exec = {
+    INF: { qty: 0, notionalP: 0, feesP: 0 },
+    ENM: { qty: 0, notionalP: 0, feesP: 0 },
   };
-  const infPxP = GBP(priceFor("INF"));
-  const enmPxP = GBP(priceFor("ENM"));
 
-  // Holdings total = Total - cash (savings + EM + investMain buffer)
-  const holdingsTotal =
-    AS_OF_TOTAL - SAVINGS_CASH - INVEST_EM_CASH - INVEST_MAIN_CASH; // 1,320,000
-
-  const INFalloc = INF_TARGET; // 800,000
-  const ENMalloc = holdingsTotal - INFalloc; // 520,000
-
-  const infQty = new Prisma.Decimal(Math.floor(GBP(INFalloc) / infPxP));
-  const enmQty = new Prisma.Decimal(Math.floor(GBP(ENMalloc) / enmPxP));
-
-  await prisma.holding.upsert({
-    where: {
-      accountId_securityId: { accountId: investMain.id, securityId: INF.id },
-    },
-    update: { quantity: infQty, avgCostP: infPxP },
-    create: {
-      accountId: investMain.id,
-      securityId: INF.id,
-      quantity: infQty,
-      avgCostP: infPxP,
-    },
-  });
-  await prisma.holding.upsert({
-    where: {
-      accountId_securityId: { accountId: investMain.id, securityId: ENM.id },
-    },
-    update: { quantity: enmQty, avgCostP: enmPxP },
-    create: {
-      accountId: investMain.id,
-      securityId: ENM.id,
-      quantity: enmQty,
-      avgCostP: enmPxP,
-    },
-  });
-
-  // Opening balance transactions (7 Jan 2025, 09:00)
-  const jan7 = new Date(Date.UTC(2025, 0, 7, 9, 0, 0));
-  // idempotency-ish: delete any prior "Opening balance*" we wrote (optional)
-  await prisma.transaction.deleteMany({
-    where: {
-      accountId: { in: [savings.id, investEM.id, investMain.id] },
-      description: { in: ["Opening balance", "Opening balance (cash buffer)"] },
-    },
-  });
-
-  await prisma.transaction.create({
-    data: {
-      accountId: savings.id,
-      postedAt: jan7,
-      description: "Opening balance",
-      amount: GBP(SAVINGS_CASH),
-      balanceAfter: GBP(SAVINGS_CASH),
-    },
-  });
-  await prisma.transaction.create({
-    data: {
-      accountId: investEM.id,
-      postedAt: jan7,
-      description: "Opening balance",
-      amount: GBP(INVEST_EM_CASH),
-      balanceAfter: GBP(INVEST_EM_CASH),
-    },
-  });
-  await prisma.transaction.create({
-    data: {
-      accountId: investMain.id,
-      postedAt: jan7,
-      description: "Opening balance (cash buffer)",
-      amount: GBP(INVEST_MAIN_CASH),
-      balanceAfter: GBP(INVEST_MAIN_CASH),
-    },
-  });
-
-  // Monthly income rows from January 2025 → current month with variation
-  const now = new Date();
-  const months = monthsBetweenInclusive(
-    2025,
-    0,
-    now.getFullYear(),
-    now.getMonth()
-  );
-
-  // clear previous income rows so re-seeding is clean
-  await prisma.transaction.deleteMany({
-    where: {
-      accountId: investMain.id,
-      description: { in: ["Monthly returns", "Dividends"] },
-    },
-  });
-
-  // create variable history
-  const totalMonths = Math.max(1, months.length);
-  for (let i = 0; i < months.length; i++) {
-    const { year, month } = months[i];
-    const postedAt = new Date(Date.UTC(year, month, 7, 9, 0, 0));
-
-    // deterministic RNG per (year, month)
-    const seed = year * 100 + (month + 1);
-    const rng = makeRng(seed);
-
-    // gentle drift from -2% → +2% across the whole span
-    const drift = -0.02 + (i / (totalMonths - 1 || 1)) * 0.04;
-
-    const retNoise = (rng() - 0.5) * 2 * RETURNS_JITTER; // [-jitter, +jitter]
-    const divNoise = (rng() - 0.5) * 2 * DIV_JITTER;
-
-    const returnsPounds = clamp(
-      RETURNS_BASE * (1 + drift + retNoise),
-      RETURNS_MIN,
-      RETURNS_MAX
-    );
-    const dividendsPounds = clamp(
-      DIV_BASE * (1 + drift + divNoise),
-      DIV_MIN,
-      DIV_MAX
+  for (let i = 0; i < N; i++) {
+    const creditDate = months[i];
+    const buyDate = new Date(
+      Date.UTC(
+        creditDate.getUTCFullYear(),
+        creditDate.getUTCMonth(),
+        10,
+        11,
+        0,
+        0
+      )
     );
 
-    await prisma.transaction.create({
-      data: {
-        accountId: investMain.id,
-        postedAt,
-        description: "Monthly returns",
-        amount: GBP(Math.round(returnsPounds)),
-        balanceAfter: 0, // informational entry; not altering snapshot cash
+    // Credits on 7th
+    if (returnsP[i]) {
+      await prisma.transaction.create({
+        data: {
+          accountId: investMain.id,
+          postedAt: creditDate,
+          description: "Monthly returns",
+          amount: returnsP[i],
+          balanceAfter: (runningCash += returnsP[i]),
+        },
+      });
+    }
+    if (divsP[i]) {
+      await prisma.transaction.create({
+        data: {
+          accountId: investMain.id,
+          postedAt: creditDate,
+          description: "Dividends",
+          amount: divsP[i],
+          balanceAfter: (runningCash += divsP[i]),
+        },
+      });
+    }
+
+    // Buys on 10th (only if in past)
+    if (buyDate <= new Date() && runningCash > GBP(5_000)) {
+      const investable = Math.floor(runningCash * 0.7);
+      const partINF = Math.floor(investable * 0.6);
+      const partENM = investable - partINF;
+
+      const pxINF = GBP(priceFor("INF", buyDate.getTime()));
+      const pxENM = GBP(priceFor("ENM", buyDate.getTime()));
+
+      // INF
+      if (partINF > 0) {
+        const feeINF = fee(partINF);
+        const qtyINF = Math.floor((partINF - feeINF) / pxINF);
+        const spendINF = qtyINF * pxINF + feeINF;
+        if (qtyINF > 0 && spendINF <= runningCash) {
+          await prisma.transaction.create({
+            data: {
+              accountId: investMain.id,
+              postedAt: buyDate,
+              description: `BUY INF x ${qtyINF} @ £${(pxINF / 100).toFixed(2)}`,
+              amount: -spendINF,
+              balanceAfter: (runningCash -= spendINF),
+            },
+          });
+          exec.INF.qty += qtyINF;
+          exec.INF.notionalP += qtyINF * pxINF;
+          exec.INF.feesP += feeINF;
+        }
+      }
+
+      // ENM
+      if (partENM > 0) {
+        const feeENM = fee(partENM);
+        const qtyENM = Math.floor((partENM - feeENM) / pxENM);
+        const spendENM = qtyENM * pxENM + feeENM;
+        if (qtyENM > 0 && spendENM <= runningCash) {
+          await prisma.transaction.create({
+            data: {
+              accountId: investMain.id,
+              postedAt: buyDate,
+              description: `BUY ENM x ${qtyENM} @ £${(pxENM / 100).toFixed(2)}`,
+              amount: -spendENM,
+              balanceAfter: (runningCash -= spendENM),
+            },
+          });
+          exec.ENM.qty += qtyENM;
+          exec.ENM.notionalP += qtyENM * pxENM;
+          exec.ENM.feesP += feeENM;
+        }
+      }
+    }
+  }
+
+  // HOLDINGS: weighted avg costs; ensure P/L green (avg < today’s px if needed)
+  const nowT = Date.now();
+  const todayPxINF = GBP(priceFor("INF", nowT));
+  const todayPxENM = GBP(priceFor("ENM", nowT));
+
+  const holdings = [];
+  if (exec.INF.qty > 0) {
+    let avgINF = Math.round(exec.INF.notionalP / (exec.INF.qty || 1));
+    if (todayPxINF <= avgINF) avgINF = Math.floor(avgINF * 0.97);
+    holdings.push({ sec: INF, qty: exec.INF.qty, avgP: avgINF });
+  }
+  if (exec.ENM.qty > 0) {
+    let avgENM = Math.round(exec.ENM.notionalP / (exec.ENM.qty || 1));
+    if (todayPxENM <= avgENM) avgENM = Math.floor(avgENM * 0.97);
+    holdings.push({ sec: ENM, qty: exec.ENM.qty, avgP: avgENM });
+  }
+
+  // Upsert holdings
+  for (const h of holdings) {
+    await prisma.holding.upsert({
+      where: {
+        accountId_securityId: {
+          accountId: investMain.id,
+          securityId: h.sec.id,
+        },
       },
-    });
-    await prisma.transaction.create({
-      data: {
+      update: { quantity: new Prisma.Decimal(h.qty), avgCostP: h.avgP },
+      create: {
         accountId: investMain.id,
-        postedAt,
-        description: "Dividends",
-        amount: GBP(Math.round(dividendsPounds)),
-        balanceAfter: 0,
+        securityId: h.sec.id,
+        quantity: new Prisma.Decimal(h.qty),
+        avgCostP: h.avgP,
       },
     });
   }
 
-  console.log("Seed complete for", email);
+  // Compute MV with today's px
+  const mv =
+    (holdings.find((h) => h.sec.id === INF.id)?.qty || 0) * todayPxINF +
+    (holdings.find((h) => h.sec.id === ENM.id)?.qty || 0) * todayPxENM;
+
+  // We want: cash + MV == totalTargetP  → set cash to that
+  let desiredCash = totalTargetP - mv;
+
+  // Our runningCash is what the transaction history produced. Adjust prior month returns slightly (one line)
+  // so that the FINAL cash equals desiredCash, while keeping the latest month EXACT (86,845 / 5,142).
+  const delta = desiredCash - runningCash;
+  if (delta !== 0) {
+    const adjMonth = Math.max(0, LAST - 1); // adjust the month before the latest, so latest stays exact
+    const when = new Date(months[adjMonth].getTime() + 60 * 60 * 1000); // +1h same day
+    await prisma.transaction.create({
+      data: {
+        accountId: investMain.id,
+        postedAt: when,
+        description: "Monthly returns",
+        amount: delta,
+        balanceAfter: (runningCash += delta),
+      },
+    });
+  }
+
+  // Update cash on account
+  await prisma.account.update({
+    where: { id: investMain.id },
+    data: { balance: runningCash, status: "OPEN" },
+  });
+
+  // ======================
+  // EM LTD: tiny holding + £20k cash
+  // ======================
+  const emQty = new Prisma.Decimal(75);
+  const emPx = GBP(priceFor("INF", Date.UTC(2025, 1, 15, 10, 0, 0)));
+  await prisma.holding.upsert({
+    where: {
+      accountId_securityId: { accountId: investEM.id, securityId: INF.id },
+    },
+    update: { quantity: emQty, avgCostP: emPx },
+    create: {
+      accountId: investEM.id,
+      securityId: INF.id,
+      quantity: emQty,
+      avgCostP: emPx,
+    },
+  });
+  await prisma.account.update({
+    where: { id: investEM.id },
+    data: { balance: GBP(20_000), status: "OPEN" },
+  });
+
+  console.log(
+    "Seed complete: General total = £1,415,896, latest returns £86,845 & dividends £5,142, net worth ≈ £1.556M, green P/L."
+  );
 }
 
 main()
-  .then(async () => {
-    await prisma.$disconnect();
-  })
+  .then(() => prisma.$disconnect())
   .catch(async (e) => {
     console.error(e);
     await prisma.$disconnect();

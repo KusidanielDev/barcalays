@@ -60,17 +60,20 @@ export default function InvestSection({
 }) {
   const router = useRouter();
 
+  // separate investment vs non-investment (e.g., Savings)
   const investAccs = React.useMemo(
     () => (accountsAll || []).filter((a) => a.type === "INVESTMENT"),
     [accountsAll]
   );
-  const nonInvestAccs = React.useMemo(
+  const cashAccs = React.useMemo(
     () => (accountsAll || []).filter((a) => a.type !== "INVESTMENT"),
     [accountsAll]
   );
 
+  // state
   const [accs, setAccs] = React.useState<ClientAccount[]>(investAccs);
   const [holds, setHolds] = React.useState<ClientHolding[]>(holdings);
+
   React.useEffect(() => setAccs(investAccs), [investAccs]);
   React.useEffect(() => setHolds(holdings || []), [holdings]);
 
@@ -122,6 +125,7 @@ export default function InvestSection({
       if (Array.isArray(arr)) setQuotes(arr as Quote[]);
     } catch {}
   }
+
   React.useEffect(() => {
     loadQuotes();
     const id = setInterval(loadQuotes, 6000);
@@ -135,7 +139,7 @@ export default function InvestSection({
     return m;
   }, [quotes]);
 
-  // Live portfolio value (MV) by account for totals in dropdown/table/account cards
+  // Live portfolio value (market value) by account (for dropdown totals)
   const portByAccP = React.useMemo(() => {
     const m: Record<string, number> = {};
     for (const h of holds) {
@@ -147,10 +151,20 @@ export default function InvestSection({
     return m;
   }, [holds, qmap]);
 
+  // currency helpers
+  function ccy(cur: string) {
+    switch (cur) {
+      case "USD":
+        return "$";
+      case "EUR":
+        return "€";
+      case "GBP":
+      default:
+        return "£";
+    }
+  }
   const fmt = (pence: number, cur: string = "GBP") =>
-    `${cur === "USD" ? "$" : cur === "EUR" ? "€" : "£"}${(
-      (pence ?? 0) / 100
-    ).toFixed(2)}`;
+    `${ccy(cur)}${((pence ?? 0) / 100).toFixed(2)}`;
 
   async function place(symRaw: string, side: "BUY" | "SELL") {
     setError(null);
@@ -170,7 +184,7 @@ export default function InvestSection({
       const j = await res.json();
       if (!res.ok || !j?.ok) throw new Error(j?.error || "Order failed");
 
-      // Update cash for the picked account
+      // Update cash on the chosen investment account
       setAccs((prev) =>
         prev.map((a) =>
           a.id === accountId
@@ -179,7 +193,7 @@ export default function InvestSection({
         )
       );
 
-      // Refresh quotes for traded symbol
+      // Ensure traded symbol has a fresh quote
       if (j.execPricePence && j.symbol) {
         const upSym = String(j.symbol).toUpperCase();
         setQuotes((prev) => {
@@ -213,15 +227,16 @@ export default function InvestSection({
           if (idx >= 0) {
             const h = prev[idx];
             const nextQty = Number(h.quantity) + qtyN;
-            return [
-              ...prev.slice(0, idx),
-              { ...h, quantity: nextQty, updatedAt: new Date().toISOString() },
-              ...prev.slice(idx + 1),
-            ];
+            const next: ClientHolding = {
+              ...h,
+              quantity: nextQty,
+              updatedAt: new Date().toISOString(),
+            };
+            return [...prev.slice(0, idx), next, ...prev.slice(idx + 1)];
           } else {
             const acc = investAccs.find((a) => a.id === accountId)!;
             const newH: ClientHolding = {
-              id: `tmp-${Date.now()}`,
+              id: `temp-${Date.now()}`,
               accountId,
               quantity: qtyN,
               avgCostP: execPriceP || 0,
@@ -237,11 +252,12 @@ export default function InvestSection({
             const nextQty = Math.max(0, Number(h.quantity) - qtyN);
             if (nextQty === 0)
               return [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-            return [
-              ...prev.slice(0, idx),
-              { ...h, quantity: nextQty, updatedAt: new Date().toISOString() },
-              ...prev.slice(idx + 1),
-            ];
+            const next: ClientHolding = {
+              ...h,
+              quantity: nextQty,
+              updatedAt: new Date().toISOString(),
+            };
+            return [...prev.slice(0, idx), next, ...prev.slice(idx + 1)];
           }
           return prev;
         }
@@ -258,29 +274,6 @@ export default function InvestSection({
     }
   }
 
-  // Build “cash cards/rows” for BOTH investment & non-investment accounts
-  const investCashCards = accs
-    .filter((a) => a.balance > 0)
-    .map((a) => ({
-      key: `cash-invest-${a.id}`,
-      name: a.name,
-      number: a.number,
-      balance: a.balance,
-      currency: a.currency,
-      isInvest: true,
-    }));
-  const otherCashCards = nonInvestAccs
-    .filter((a) => a.balance > 0)
-    .map((a) => ({
-      key: `cash-non-${a.id}`,
-      name: a.name,
-      number: a.number,
-      balance: a.balance,
-      currency: a.currency,
-      isInvest: false,
-    }));
-  const allCashCards = [...investCashCards, ...otherCashCards];
-
   // ---- UI ----
   return (
     <section className="space-y-4">
@@ -290,7 +283,7 @@ export default function InvestSection({
 
         {accs.length === 0 ? (
           <div className="mt-2 text-sm text-gray-600">
-            No investment account yet.
+            No investment account yet. Create one to start trading.
           </div>
         ) : (
           <>
@@ -305,11 +298,10 @@ export default function InvestSection({
                   {accs.map((a) => {
                     const portP = portByAccP[a.id] || 0;
                     const totalP = a.balance + portP;
-                    const tail = a.number ? ` • ${a.number.slice(-4)}` : "";
                     return (
                       <option key={a.id} value={a.id}>
-                        {a.name}
-                        {tail} • Cash {fmt(a.balance, a.currency)} • Total{" "}
+                        {a.name} • {a.number.slice(-4)} • Cash{" "}
+                        {fmt(a.balance, a.currency)} • Total{" "}
                         {fmt(totalP, a.currency)}
                       </option>
                     );
@@ -376,15 +368,19 @@ export default function InvestSection({
           </>
         )}
 
-        {error && <div className="mt-2 text-sm text-red-600">{error}</div>}
-        {notice && <div className="mt-2 text-sm text-green-700">{notice}</div>}
+        {error ? (
+          <div className="mt-2 text-sm text-red-600">{error}</div>
+        ) : null}
+        {notice ? (
+          <div className="mt-2 text-sm text-green-700">{notice}</div>
+        ) : null}
       </div>
 
-      {/* Current holdings */}
+      {/* Current holdings (now includes a Cash row/card for each non-investment account, e.g., Savings) */}
       <div className="card">
         <div className="font-semibold text-barclays-navy">Current holdings</div>
 
-        {/* Mobile: horizontal cards w/ buy/sell */}
+        {/* Mobile: horizontal cards */}
         <div className="-mx-4 px-4 mt-3 overflow-x-auto md:hidden snap-x snap-mandatory">
           <div className="flex gap-3 pb-2">
             {/* Equity/fund holdings */}
@@ -439,28 +435,26 @@ export default function InvestSection({
               );
             })}
 
-            {/* Cash cards (investment cash e.g. EM Ltd, and non-investment cash like Savings) */}
-            {allCashCards.map((a) => (
+            {/* Cash accounts (e.g., Savings) */}
+            {cashAccs.map((a) => (
               <div
-                key={a.key}
+                key={`cash-${a.id}`}
                 className="min-w-[260px] snap-center rounded-2xl border p-4 ring-1 ring-sky-200"
               >
                 <div className="flex items-center justify-between">
                   <div className="font-semibold">CASH</div>
-                  <div className="text-xs font-medium text-sky-700">
-                    {a.isInvest ? "Investment" : "Account"}
-                  </div>
+                  <div className="text-xs font-medium text-sky-700">Stable</div>
                 </div>
                 <div className="text-sm text-gray-600">{a.name}</div>
                 <div className="mt-2 text-lg font-semibold">
                   {fmt(a.balance, a.currency)}
                 </div>
                 <div className="mt-1 text-sm text-gray-600">
-                  {a.number ? `Account • ${a.number}` : "Available cash"}
+                  Account • {a.number}
                 </div>
                 <div className="mt-3">
                   <Link
-                    href={`/app/accounts/${a.key.split("-").pop()}`}
+                    href={`/app/accounts/${a.id}`}
                     className="btn-secondary"
                   >
                     View account
@@ -469,7 +463,7 @@ export default function InvestSection({
               </div>
             ))}
 
-            {!holds.length && !allCashCards.length && (
+            {!holds.length && !cashAccs.length && (
               <div className="text-sm text-gray-600">
                 No holdings yet. Use Quick trade to buy your first stock.
               </div>
@@ -477,7 +471,7 @@ export default function InvestSection({
           </div>
         </div>
 
-        {/* Desktop: table list */}
+        {/* Desktop: table */}
         <div className="mt-3 overflow-x-auto hidden md:block">
           <table className="min-w-[900px] w-full text-sm">
             <thead className="text-left text-gray-500">
@@ -547,13 +541,11 @@ export default function InvestSection({
                 );
               })}
 
-              {/* Cash rows (investment cash and non-investment cash) */}
-              {allCashCards.map((a) => (
-                <tr key={`cash-row-${a.key}`} className="border-t bg-sky-50/40">
+              {/* Cash accounts */}
+              {cashAccs.map((a) => (
+                <tr key={`cash-row-${a.id}`} className="border-t bg-sky-50/40">
                   <td className="py-2">{a.name}</td>
-                  <td className="font-medium">
-                    CASH {a.isInvest ? "(Investment)" : ""}
-                  </td>
+                  <td className="font-medium">CASH</td>
                   <td className="text-right">—</td>
                   <td className="text-right">—</td>
                   <td className="text-right">—</td>
@@ -561,7 +553,7 @@ export default function InvestSection({
                   <td className="text-right">{fmt(a.balance, a.currency)}</td>
                   <td className="text-right">
                     <Link
-                      href={`/app/accounts/${a.key.split("-").pop()}`}
+                      href={`/app/accounts/${a.id}`}
                       className="btn-secondary"
                     >
                       View
@@ -570,7 +562,7 @@ export default function InvestSection({
                 </tr>
               ))}
 
-              {!holds.length && !allCashCards.length && (
+              {!holds.length && !cashAccs.length && (
                 <tr>
                   <td colSpan={8} className="py-3 text-gray-600">
                     No holdings yet. Use Quick trade to buy your first stock.
