@@ -39,8 +39,8 @@ const fmtGBP = (pence: number) =>
     (pence ?? 0) / 100
   );
 
-function fmtDT(iso: string) {
-  const d = new Date(iso);
+function fmtDT(when: string | Date) {
+  const d = typeof when === "string" ? new Date(when) : when;
   return d.toLocaleString("en-GB", {
     day: "2-digit",
     month: "short",
@@ -65,7 +65,7 @@ function sparkPath(values: number[], width = 260, height = 64, pad = 6) {
   return d;
 }
 
-/** ---------- Server-side price anchors (match seed/api) ---------- */
+/** ---------- Deterministic price anchors (for charts/PL only) ---------- */
 const BASE: Record<string, number> = {
   AAPL: 189.12,
   TSLA: 239.55,
@@ -85,12 +85,17 @@ const BASE: Record<string, number> = {
   INF: 8.5,
   ENM: 9.1,
 };
-function serverPriceFor(sym: string, t: number) {
-  const base = BASE[sym] ?? 100;
-  const wave = Math.sin(Math.floor(t / 7000)) * 0.5;
-  const micro = ((t % 10000) / 10000 - 0.5) * 0.4;
-  return Math.max(0.5, base + wave + micro);
+function serverPriceFor(sym: string) {
+  return Math.max(0.5, BASE[sym] ?? 100); // fixed to keep UI totals stable
 }
+
+/** ---------- Display targets (exact balances you want to see) ---------- */
+const DISPLAY_TOTALS_PENCE: Record<string, number> = {
+  "SAV-AR-0001": Math.round(10_000 * 100), // Savings Account
+  "INV-AR-EM-0001": Math.round(20_000 * 100), // Investment Account EM Ltd (total)
+  "INV-AR-GEN-0001": Math.round(1_415_896 * 100), // General Investment (total)
+};
+const ALLOWED_NUMBERS = new Set(Object.keys(DISPLAY_TOTALS_PENCE));
 
 export default async function Dashboard() {
   const session = await auth();
@@ -113,12 +118,13 @@ export default async function Dashboard() {
           where: { account: { userId: user.id } },
           include: { account: true },
           orderBy: { postedAt: "desc" },
-          take: 100,
+          take: 120,
         }),
       ])
     : [[], [] as any[]];
 
-  const accounts: ClientAccount[] = (accountsDb ?? []).map((a) => ({
+  // Only keep the 3 cards you want to show
+  const accountsAll: ClientAccount[] = (accountsDb ?? []).map((a) => ({
     id: a.id,
     name: a.name,
     type: a.type,
@@ -126,7 +132,9 @@ export default async function Dashboard() {
     balance: a.balance,
     currency: a.currency,
   }));
+  const accounts = accountsAll.filter((a) => ALLOWED_NUMBERS.has(a.number));
 
+  // Holdings (only for the 3 accounts if they are investment)
   const investAccountIds = accounts
     .filter((a) => a.type === "INVESTMENT")
     .map((a) => a.id);
@@ -153,24 +161,44 @@ export default async function Dashboard() {
     }));
   }
 
-  // ----- Per-account MV so totals add up -----
-  const t = Date.now();
+  // Compute a simple MV (for the breakdown line only; totals come from DISPLAY_TOTALS)
   const holdingsByAccountValueP: Record<string, number> = {};
   for (const h of holdings) {
     const sym = h.security.symbol.toUpperCase();
-    const pxP = Math.round(serverPriceFor(sym, t) * 100);
-    const valueP = Math.round(Number(h.quantity) * pxP);
+    const pxP = Math.round(serverPriceFor(sym) * 100); // fixed
+    const valP = pxP * Number(h.quantity);
     holdingsByAccountValueP[h.accountId] =
-      (holdingsByAccountValueP[h.accountId] || 0) + valueP;
+      (holdingsByAccountValueP[h.accountId] || 0) + valP;
   }
 
-  const cashTotal = accounts.reduce((s, a) => s + a.balance, 0);
-  const investValue = Object.values(holdingsByAccountValueP).reduce(
-    (s, v) => s + v,
+  // Build display totals: exact target totals where defined
+  const displayTotalById: Record<string, number> = {};
+  for (const a of accounts) {
+    const target = DISPLAY_TOTALS_PENCE[a.number];
+    if (typeof target === "number") {
+      displayTotalById[a.id] = target;
+    } else if (a.type === "INVESTMENT") {
+      displayTotalById[a.id] = a.balance + (holdingsByAccountValueP[a.id] || 0);
+    } else {
+      displayTotalById[a.id] = a.balance;
+    }
+  }
+
+  // Net worth from display totals (so the header matches the card numbers perfectly)
+  const netWorth = accounts.reduce(
+    (s, a) => s + (displayTotalById[a.id] || 0),
     0
   );
-  const netWorth = cashTotal + investValue;
 
+  // Latest incomes for the IncomeSummary widget (uses your tx history)
+  const latestReturns = (txDb ?? []).find((t) =>
+    /Monthly returns/i.test(t.description)
+  );
+  const latestDivs = (txDb ?? []).find((t) => /Dividends/i.test(t.description));
+  const monthlyReturnsP = latestReturns?.amount ?? 0; // expect £86,845.00
+  const monthlyDividendsP = latestDivs?.amount ?? 0; // expect £5,142.00
+
+  // Recent transactions (unchanged)
   const txns: ClientTxn[] = (txDb ?? []).slice(0, 12).map((t) => ({
     id: t.id,
     postedAt: t.postedAt.toISOString(),
@@ -179,6 +207,7 @@ export default async function Dashboard() {
     accountName: t.account.name,
   }));
 
+  // Tiny sparkline based on the (display) net worth
   const sparkSeries = (() => {
     const base = netWorth;
     if (!(txDb ?? []).length) return [base, base];
@@ -188,14 +217,6 @@ export default async function Dashboard() {
     for (let i = 0; i < seq.length; i++) acc.push(acc[acc.length - 1] + seq[i]);
     return acc.slice(-16);
   })();
-
-  // Latest monthly figures for the IncomeSummary
-  const latestReturns = txDb.find((t) =>
-    /Monthly returns/i.test(t.description)
-  );
-  const latestDivs = txDb.find((t) => /Dividends/i.test(t.description));
-  const monthlyReturnsP = latestReturns?.amount ?? 0;
-  const monthlyDividendsP = latestDivs?.amount ?? 0;
 
   return (
     <div className="w-full overflow-x-hidden">
@@ -223,9 +244,6 @@ export default async function Dashboard() {
               </div>
               <div className="mt-1 text-2xl md:text-3xl font-semibold text-barclays-navy">
                 Net worth {fmtGBP(netWorth)}
-              </div>
-              <div className="mt-2 text-sm text-gray-600">
-                Cash {fmtGBP(cashTotal)} • Investments {fmtGBP(investValue)}
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
                 <Link href="/app/payments" className="btn-primary">
@@ -267,37 +285,26 @@ export default async function Dashboard() {
           </div>
         </div>
 
-        {/* Income summary */}
+        {/* Income summary (latest month expected: £86,845 & £5,142) */}
         <IncomeSummary
           returnsP={monthlyReturnsP}
           dividendsP={monthlyDividendsP}
           startDateLabel={"7 Jan 2025"}
         />
 
-        {/* Market widget: multi-stock switcher (trading uses passed accounts) */}
+        {/* Market widget */}
         <div className="overflow-hidden rounded-2xl">
           <StocksMultiChart accounts={accounts} />
         </div>
 
-        {/* Investments — pass ALL accounts so cash-only (e.g., EM Ltd) shows under holdings */}
+        {/* Investments — pass ALL three accounts and the holdings */}
         <InvestSection accountsAll={accounts} holdings={holdings} />
 
-        {/* Your accounts (totals = cash + MV for investment accounts) */}
+        {/* Your accounts (3 cards, with display totals) */}
         <div className="card overflow-hidden">
           <div className="flex items-center justify-between gap-2">
             <div className="font-semibold text-barclays-navy">
               Your accounts
-            </div>
-            <div className="flex gap-2">
-              <Link href="/app/accounts/new" className="btn-secondary">
-                Open new account
-              </Link>
-              <Link
-                href="/app/accounts/new?preset=INVESTMENT"
-                className="btn-primary"
-              >
-                Create investment account
-              </Link>
             </div>
           </div>
 
@@ -308,38 +315,32 @@ export default async function Dashboard() {
               style={{ WebkitOverflowScrolling: "touch" }}
             >
               <div className="flex gap-3 pb-2">
-                {accounts.length ? (
-                  accounts.map((a) => {
-                    const holdingsP = holdingsByAccountValueP[a.id] || 0;
-                    const isInvest = a.type === "INVESTMENT";
-                    const totalP = isInvest ? a.balance + holdingsP : a.balance;
-                    return (
-                      <Link
-                        key={a.id}
-                        href={`/app/accounts/${a.id}`}
-                        className="flex-shrink-0 w-64 rounded-2xl border p-4 hover:bg-gray-50"
-                      >
-                        <div className="text-sm text-gray-600 truncate">
-                          {a.name}
-                        </div>
-                        <div className="text-xl font-semibold">
-                          {fmtGBP(totalP)}
-                        </div>
-                        <div className="text-xs text-gray-500 mt-1 truncate">
-                          {isInvest
-                            ? `cash ${fmtGBP(a.balance)} • holdings ${fmtGBP(
-                                holdingsP
-                              )}`
-                            : `${a.number} • {a.currency}`}
-                        </div>
-                      </Link>
-                    );
-                  })
-                ) : (
-                  <div className="text-sm text-gray-600">
-                    No accounts yet. Create one to get started.
-                  </div>
-                )}
+                {accounts.map((a) => {
+                  const totalP = displayTotalById[a.id] ?? a.balance;
+                  const holdingsP = Math.max(0, totalP - a.balance);
+                  const isInvest = a.type === "INVESTMENT";
+                  return (
+                    <Link
+                      key={a.id}
+                      href={`/app/accounts/${a.id}`}
+                      className="flex-shrink-0 w-64 rounded-2xl border p-4 hover:bg-gray-50"
+                    >
+                      <div className="text-sm text-gray-600 truncate">
+                        {a.name}
+                      </div>
+                      <div className="text-xl font-semibold">
+                        {fmtGBP(totalP)}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1 truncate">
+                        {isInvest
+                          ? `cash ${fmtGBP(a.balance)} • holdings ${fmtGBP(
+                              holdingsP
+                            )}`
+                          : `${a.number} • ${a.currency}`}
+                      </div>
+                    </Link>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -347,9 +348,9 @@ export default async function Dashboard() {
           {/* Desktop grid */}
           <div className="mt-3 hidden md:grid grid-cols-2 lg:grid-cols-3 gap-4">
             {accounts.map((a) => {
-              const holdingsP = holdingsByAccountValueP[a.id] || 0;
+              const totalP = displayTotalById[a.id] ?? a.balance;
+              const holdingsP = Math.max(0, totalP - a.balance);
               const isInvest = a.type === "INVESTMENT";
-              const totalP = isInvest ? a.balance + holdingsP : a.balance;
               return (
                 <Link
                   key={a.id}
@@ -403,52 +404,6 @@ export default async function Dashboard() {
             )}
           </div>
         </section>
-
-        {/* Feature tiles */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Link href="/app/payments" className="card hover:bg-gray-50">
-            <div className="font-semibold text-barclays-navy">Payments</div>
-            <div className="text-sm text-gray-600">Send money to anyone.</div>
-          </Link>
-          <Link href="/app/transactions" className="card hover:bg-gray-50">
-            <div className="font-semibold text-barclays-navy">
-              View all transactions
-            </div>
-            <div className="text-sm text-gray-600">Full history & export.</div>
-          </Link>
-          <Link href="/app/cards" className="card hover:bg-gray-50">
-            <div className="font-semibold text-barclays-navy">Cards</div>
-            <div className="text-sm text-gray-600">
-              Freeze / unfreeze & details.
-            </div>
-          </Link>
-          <Link href="/app/loans" className="card hover:bg-gray-50">
-            <div className="font-semibold text-barclays-navy">Loans</div>
-            <div className="text-sm text-gray-600">
-              Apply & manage repayments.
-            </div>
-          </Link>
-          <Link href="/app/goals" className="card hover:bg-gray-50">
-            <div className="font-semibold text-barclays-navy">Goals</div>
-            <div className="text-sm text-gray-600">Save towards targets.</div>
-          </Link>
-          <Link href="/app/budgets" className="card hover:bg-gray-50">
-            <div className="font-semibold text-barclays-navy">Budgets</div>
-            <div className="text-sm text-gray-600">
-              Set limits & track spend.
-            </div>
-          </Link>
-          <Link href="/app/analytics" className="card hover:bg-gray-50">
-            <div className="font-semibold text-barclays-navy">Analytics</div>
-            <div className="text-sm text-gray-600">Trends & insights.</div>
-          </Link>
-          <Link href="/app/support" className="card hover:bg-gray-50">
-            <div className="font-semibold text-barclays-navy">Support</div>
-            <div className="text-sm text-gray-600">
-              Get help and contact us.
-            </div>
-          </Link>
-        </div>
       </div>
     </div>
   );

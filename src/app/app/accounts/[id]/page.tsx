@@ -18,7 +18,7 @@ const fmtDT = (d: Date) =>
     minute: "2-digit",
   });
 
-/** ---------- Server price anchors (match dashboard/seed) ---------- */
+/** ---------- Deterministic price anchors (for PL table only) ---------- */
 const BASE: Record<string, number> = {
   AAPL: 189.12,
   TSLA: 239.55,
@@ -38,12 +38,16 @@ const BASE: Record<string, number> = {
   INF: 8.5,
   ENM: 9.1,
 };
-function serverPriceFor(sym: string, t: number) {
-  const base = BASE[sym] ?? 100;
-  const wave = Math.sin(Math.floor(t / 7000)) * 0.5;
-  const micro = ((t % 10000) / 10000 - 0.5) * 0.4;
-  return Math.max(0.5, base + wave + micro);
+function serverPriceFor(sym: string) {
+  return Math.max(0.5, BASE[sym] ?? 100); // fixed so PL table is stable
 }
+
+/** ---------- EXACT display totals by NAME (your requested balances) ---------- */
+const DISPLAY_TOTALS_BY_NAME: Record<string, number> = {
+  "Savings Account": Math.round(10_000 * 100),
+  "Investment Account EM Ltd": Math.round(20_000 * 100),
+  "General Investment (Informa PLC & ENM)": Math.round(1_415_896 * 100),
+};
 
 export default async function AccountDetail({
   params,
@@ -62,10 +66,9 @@ export default async function AccountDetail({
   });
   if (!account) notFound();
 
-  // If investment, load holdings for MV calculation
   const isInvest = account.type === "INVESTMENT";
-  const tNow = Date.now();
 
+  // Load holdings (for the info table; headline balance will use DISPLAY_TOTALS_BY_NAME)
   const holdings = isInvest
     ? await prisma.holding.findMany({
         where: { accountId: account.id },
@@ -74,12 +77,12 @@ export default async function AccountDetail({
       })
     : [];
 
-  // Compute MV, P/L etc.
+  // Compute holdings MV & P/L (for table only)
   let holdingsMV = 0;
   const rows = holdings.map((h) => {
     const qty = Number(h.quantity as any);
     const sym = h.security.symbol.toUpperCase();
-    const pxP = Math.round(serverPriceFor(sym, tNow) * 100); // pence
+    const pxP = Math.round(serverPriceFor(sym) * 100);
     const valP = pxP * qty;
     const pnlP = (pxP - h.avgCostP) * qty;
     holdingsMV += valP;
@@ -96,9 +99,13 @@ export default async function AccountDetail({
     };
   });
 
-  const totalBalanceP = isInvest
-    ? account.balance + holdingsMV
-    : account.balance;
+  // ---------- Use EXACT display total by name (fallback to cash+MV if not mapped) ----------
+  const mapped = DISPLAY_TOTALS_BY_NAME[account.name];
+  const displayTotalP =
+    typeof mapped === "number" ? mapped : account.balance + holdingsMV;
+
+  // Breakdown shown under the big number (so it still adds up to the displayed total)
+  const displayHoldingsP = Math.max(0, displayTotalP - account.balance);
 
   const tx = await prisma.transaction.findMany({
     where: { accountId: account.id },
@@ -149,25 +156,23 @@ export default async function AccountDetail({
             <div className="text-sm text-gray-600">Currency</div>
             <div className="font-semibold">{account.currency}</div>
           </div>
-
-          {/* Balance block */}
           <div>
-            <div className="text-sm text-gray-600">
-              {isInvest ? "Total balance (cash + holdings)" : "Balance"}
-            </div>
+            <div className="text-sm text-gray-600">Balance</div>
+            {/* Show your exact total here */}
             <div className="text-2xl font-semibold">
-              {fmtGBP(totalBalanceP)}
+              {fmtGBP(displayTotalP)}
             </div>
             {isInvest && (
               <div className="text-xs text-gray-600 mt-1">
-                Cash {fmtGBP(account.balance)} • Holdings {fmtGBP(holdingsMV)}
+                Cash {fmtGBP(account.balance)} • Holdings{" "}
+                {fmtGBP(displayHoldingsP)}
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Holdings (only for investment accounts) */}
+      {/* Holdings (investment only) */}
       {isInvest && (
         <div className="card">
           <div className="flex items-center justify-between mb-2">
