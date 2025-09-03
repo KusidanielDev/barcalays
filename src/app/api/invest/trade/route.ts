@@ -73,7 +73,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // --- Pricing model (deterministic pseudo price for demo) ---
+    // --- Pricing model (deterministic pseudo price for  ) ---
     // You can wire this to a real quote API later.
     // Price in pence (GBP) for storage; do a simple seeded calc:
     const seed = symbol.split("").reduce((s, c) => s + c.charCodeAt(0), 0);
@@ -83,7 +83,7 @@ export async function POST(req: Request) {
     const baseGBP = symbol === "TSLA" ? 180 : symbol === "AAPL" ? 140 : 100;
     const priceGBP = Math.max(1, baseGBP * (1 + wiggle));
     const pricePence = Math.round(priceGBP * 100);
-    const feePence = 100; // flat £1 fee for demo
+    const feePence = 100; // flat £1 fee for
 
     // --- Execute trade atomically ---
     const result = await prisma.$transaction(async (tx) => {

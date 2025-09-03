@@ -5,7 +5,7 @@ import Providers from "./providers";
 
 export const metadata = {
   title: "Barclays",
-  description: "Barclays banking demo landing and app",
+  description: "Barclays banking   landing and app",
 };
 
 export default function RootLayout({

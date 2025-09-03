@@ -31,7 +31,7 @@ export async function POST() {
       type: "INVESTMENT",
       number: `GI-${Math.floor(100000 + Math.random() * 900000)}`,
       sortCode: "23-45-67",
-      balance: 2000000, // £20,000 demo cash
+      balance: 2000000, // £20,000   cash
       currency: "GBP",
       status: "OPEN",
     },

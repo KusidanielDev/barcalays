@@ -252,7 +252,7 @@ export default function LoginPage() {
           Authority and the Prudential Regulation Authority (FS Register No.
           122702).
           <br />
-          <strong>Note:</strong> Demo application for educational purposes only.
+          <strong>Note:</strong> application for educational purposes only.
         </p>
       </div>
     </div>

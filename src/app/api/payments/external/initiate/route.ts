@@ -83,6 +83,6 @@ export async function POST(req: Request) {
     },
   });
 
-  // In real life you would deliver OTP out-of-band; for demo we return it
+  // In real life you would deliver OTP out-of-band; for   we return it
   return NextResponse.json({ paymentId: payment.id, otpPreview: otpCode });
 }

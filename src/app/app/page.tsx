@@ -89,14 +89,6 @@ function serverPriceFor(sym: string) {
   return Math.max(0.5, BASE[sym] ?? 100); // fixed to keep UI totals stable
 }
 
-/** ---------- Display targets (exact balances you want to see) ---------- */
-const DISPLAY_TOTALS_PENCE: Record<string, number> = {
-  "SAV-AR-0001": Math.round(10_000 * 100), // Savings Account
-  "INV-AR-EM-0001": Math.round(20_000 * 100), // Investment Account EM Ltd (total)
-  "INV-AR-GEN-0001": Math.round(1_415_896 * 100), // General Investment (total)
-};
-const ALLOWED_NUMBERS = new Set(Object.keys(DISPLAY_TOTALS_PENCE));
-
 export default async function Dashboard() {
   const session = await auth();
   const email = session?.user?.email?.toLowerCase() || "";
@@ -123,8 +115,8 @@ export default async function Dashboard() {
       ])
     : [[], [] as any[]];
 
-  // Only keep the 3 cards you want to show
-  const accountsAll: ClientAccount[] = (accountsDb ?? []).map((a) => ({
+  // Use all accounts directly
+  const accounts: ClientAccount[] = (accountsDb ?? []).map((a) => ({
     id: a.id,
     name: a.name,
     type: a.type,
@@ -132,9 +124,8 @@ export default async function Dashboard() {
     balance: a.balance,
     currency: a.currency,
   }));
-  const accounts = accountsAll.filter((a) => ALLOWED_NUMBERS.has(a.number));
 
-  // Holdings (only for the 3 accounts if they are investment)
+  // Holdings (only for investment accounts)
   const investAccountIds = accounts
     .filter((a) => a.type === "INVESTMENT")
     .map((a) => a.id);
@@ -161,7 +152,7 @@ export default async function Dashboard() {
     }));
   }
 
-  // Compute a simple MV (for the breakdown line only; totals come from DISPLAY_TOTALS)
+  // Compute holdings value
   const holdingsByAccountValueP: Record<string, number> = {};
   for (const h of holdings) {
     const sym = h.security.symbol.toUpperCase();
@@ -171,34 +162,31 @@ export default async function Dashboard() {
       (holdingsByAccountValueP[h.accountId] || 0) + valP;
   }
 
-  // Build display totals: exact target totals where defined
+  // Compute totals per account (cash + holdings for investments)
   const displayTotalById: Record<string, number> = {};
   for (const a of accounts) {
-    const target = DISPLAY_TOTALS_PENCE[a.number];
-    if (typeof target === "number") {
-      displayTotalById[a.id] = target;
-    } else if (a.type === "INVESTMENT") {
+    if (a.type === "INVESTMENT") {
       displayTotalById[a.id] = a.balance + (holdingsByAccountValueP[a.id] || 0);
     } else {
       displayTotalById[a.id] = a.balance;
     }
   }
 
-  // Net worth from display totals (so the header matches the card numbers perfectly)
+  // Net worth
   const netWorth = accounts.reduce(
     (s, a) => s + (displayTotalById[a.id] || 0),
     0
   );
 
-  // Latest incomes for the IncomeSummary widget (uses your tx history)
+  // Latest incomes for the IncomeSummary widget
   const latestReturns = (txDb ?? []).find((t) =>
     /Monthly returns/i.test(t.description)
   );
   const latestDivs = (txDb ?? []).find((t) => /Dividends/i.test(t.description));
-  const monthlyReturnsP = latestReturns?.amount ?? 0; // expect £86,845.00
-  const monthlyDividendsP = latestDivs?.amount ?? 0; // expect £5,142.00
+  const monthlyReturnsP = latestReturns?.amount ?? 0;
+  const monthlyDividendsP = latestDivs?.amount ?? 0;
 
-  // Recent transactions (unchanged)
+  // Recent transactions
   const txns: ClientTxn[] = (txDb ?? []).slice(0, 12).map((t) => ({
     id: t.id,
     postedAt: t.postedAt.toISOString(),
@@ -207,7 +195,7 @@ export default async function Dashboard() {
     accountName: t.account.name,
   }));
 
-  // Tiny sparkline based on the (display) net worth
+  // Sparkline
   const sparkSeries = (() => {
     const base = netWorth;
     if (!(txDb ?? []).length) return [base, base];
@@ -285,7 +273,7 @@ export default async function Dashboard() {
           </div>
         </div>
 
-        {/* Income summary (latest month expected: £86,845 & £5,142) */}
+        {/* Income summary */}
         <IncomeSummary
           returnsP={monthlyReturnsP}
           dividendsP={monthlyDividendsP}
@@ -297,10 +285,10 @@ export default async function Dashboard() {
           <StocksMultiChart accounts={accounts} />
         </div>
 
-        {/* Investments — pass ALL three accounts and the holdings */}
+        {/* Investments */}
         <InvestSection accountsAll={accounts} holdings={holdings} />
 
-        {/* Your accounts (3 cards, with display totals) */}
+        {/* Your accounts */}
         <div className="card overflow-hidden">
           <div className="flex items-center justify-between gap-2">
             <div className="font-semibold text-barclays-navy">

@@ -1,4 +1,3 @@
-// FILE: src/app/app/accounts/page.tsx
 "use client";
 import Link from "next/link";
 import useSWR from "swr";
@@ -20,27 +19,6 @@ const fmtGBP = (p: number) =>
   new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
     p / 100
   );
-
-// --- Display overrides in PENCE (what you want to SEE as the balance) ---
-const OV = {
-  SAVINGS: Math.round(10_000 * 100), // £10,000
-  EM: Math.round(20_000 * 100), // £20,000
-  GENERAL: Math.round(1_415_896 * 100), // £1,415,896
-};
-
-// normalize names to be resilient to small differences
-function normName(n: string) {
-  return n.trim().toLowerCase().replace(/\s+/g, " ");
-}
-function displayOverrideForName(name: string): number | undefined {
-  const k = normName(name);
-  if (k === "savings account") return OV.SAVINGS;
-  if (k === "investment account em ltd") return OV.EM;
-  // allow a couple forms for the general investment name
-  if (k === "general investment (informa plc & enm)") return OV.GENERAL;
-  if (k === "general investment informa plc & enm") return OV.GENERAL;
-  return undefined;
-}
 
 export default function AccountsPage() {
   const { data, isLoading } = useSWR("/api/accounts", fetcher);
@@ -92,41 +70,37 @@ export default function AccountsPage() {
             </tr>
           </thead>
           <tbody>
-            {accounts.map((a) => {
-              const override = displayOverrideForName(a.name);
-              const displayBalance = override ?? a.balance;
-              return (
-                <tr key={a.id} className="border-t hover:bg-gray-50">
-                  <td className="py-4 pl-4 font-medium text-barclays-navy">
-                    {a.name}
-                  </td>
-                  <td className="text-gray-600">
-                    <span className="bg-barclays-blue/10 text-barclays-blue text-xs px-2 py-1 rounded-full">
-                      {a.type}
-                    </span>
-                  </td>
-                  <td className="font-semibold text-barclays-navy">
-                    {fmtGBP(displayBalance)}
-                  </td>
-                  <td className="text-right pr-4">
-                    <div className="flex flex-wrap justify-end gap-2">
-                      <Link
-                        className="btn-secondary text-xs"
-                        href={`/app/accounts/${a.id}`}
-                      >
-                        Details
-                      </Link>
-                      <a
-                        className="btn-secondary text-xs"
-                        href={`/api/accounts/${a.id}/statement.csv`}
-                      >
-                        Statement CSV
-                      </a>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+            {accounts.map((a) => (
+              <tr key={a.id} className="border-t hover:bg-gray-50">
+                <td className="py-4 pl-4 font-medium text-barclays-navy">
+                  {a.name}
+                </td>
+                <td className="text-gray-600">
+                  <span className="bg-barclays-blue/10 text-barclays-blue text-xs px-2 py-1 rounded-full">
+                    {a.type}
+                  </span>
+                </td>
+                <td className="font-semibold text-barclays-navy">
+                  {fmtGBP(a.balance)}
+                </td>
+                <td className="text-right pr-4">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Link
+                      className="btn-secondary text-xs"
+                      href={`/app/accounts/${a.id}`}
+                    >
+                      Details
+                    </Link>
+                    <a
+                      className="btn-secondary text-xs"
+                      href={`/api/accounts/${a.id}/statement.csv`}
+                    >
+                      Statement CSV
+                    </a>
+                  </div>
+                </td>
+              </tr>
+            ))}
 
             {!isLoading && accounts.length === 0 && (
               <tr>
@@ -141,71 +115,64 @@ export default function AccountsPage() {
 
       {/* Mobile cards */}
       <div className="grid grid-cols-1 gap-4 md:hidden">
-        {accounts.map((a) => {
-          const override = displayOverrideForName(a.name);
-          const displayBalance = override ?? a.balance;
-          return (
-            <div
-              key={a.id}
-              className="bg-white rounded-xl shadow-sm p-4 border"
-            >
-              <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <h3 className="font-semibold text-barclays-navy">{a.name}</h3>
-                  <span className="inline-block bg-barclays-blue/10 text-barclays-blue text-xs px-2 py-1 rounded-full mt-2">
-                    {a.type}
-                  </span>
-                </div>
-
-                {/* actions dropdown */}
-                <div className="relative">
-                  <button
-                    onClick={() => toggleDropdown(a.id)}
-                    className="p-2 rounded-full hover:bg-gray-100"
-                    aria-label="More actions"
-                  >
-                    <svg
-                      className="w-5 h-5"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <circle cx="5" cy="12" r="1.5" />
-                      <circle cx="12" cy="12" r="1.5" />
-                      <circle cx="19" cy="12" r="1.5" />
-                    </svg>
-                  </button>
-                  {activeDropdown === a.id && (
-                    <div className="absolute right-0 mt-2 w-44 bg-white border rounded-lg shadow-lg z-20">
-                      <Link
-                        href={`/app/accounts/${a.id}`}
-                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                        onClick={() => setActiveDropdown(null)}
-                      >
-                        Details
-                      </Link>
-                      <a
-                        href={`/api/accounts/${a.id}/statement.csv`}
-                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                        onClick={() => setActiveDropdown(null)}
-                      >
-                        Statement CSV
-                      </a>
-                    </div>
-                  )}
-                </div>
+        {accounts.map((a) => (
+          <div key={a.id} className="bg-white rounded-xl shadow-sm p-4 border">
+            <div className="flex justify-between items-start">
+              <div className="flex-1">
+                <h3 className="font-semibold text-barclays-navy">{a.name}</h3>
+                <span className="inline-block bg-barclays-blue/10 text-barclays-blue text-xs px-2 py-1 rounded-full mt-2">
+                  {a.type}
+                </span>
               </div>
 
-              <div className="mt-4 flex justify-between items-center">
-                <div>
-                  <p className="text-sm text-gray-600">Balance</p>
-                  <p className="text-xl font-bold text-barclays-navy">
-                    {fmtGBP(displayBalance)}
-                  </p>
-                </div>
+              {/* actions dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() => toggleDropdown(a.id)}
+                  className="p-2 rounded-full hover:bg-gray-100"
+                  aria-label="More actions"
+                >
+                  <svg
+                    className="w-5 h-5"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                  >
+                    <circle cx="5" cy="12" r="1.5" />
+                    <circle cx="12" cy="12" r="1.5" />
+                    <circle cx="19" cy="12" r="1.5" />
+                  </svg>
+                </button>
+                {activeDropdown === a.id && (
+                  <div className="absolute right-0 mt-2 w-44 bg-white border rounded-lg shadow-lg z-20">
+                    <Link
+                      href={`/app/accounts/${a.id}`}
+                      className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                      onClick={() => setActiveDropdown(null)}
+                    >
+                      Details
+                    </Link>
+                    <a
+                      href={`/api/accounts/${a.id}/statement.csv`}
+                      className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                      onClick={() => setActiveDropdown(null)}
+                    >
+                      Statement CSV
+                    </a>
+                  </div>
+                )}
               </div>
             </div>
-          );
-        })}
+
+            <div className="mt-4 flex justify-between items-center">
+              <div>
+                <p className="text-sm text-gray-600">Balance</p>
+                <p className="text-xl font-bold text-barclays-navy">
+                  {fmtGBP(a.balance)}
+                </p>
+              </div>
+            </div>
+          </div>
+        ))}
 
         {!isLoading && accounts.length === 0 && (
           <div className="bg-white rounded-xl shadow-sm p-6 border text-center">

@@ -451,8 +451,7 @@ export default function SignupPage() {
                       <p className="text-sm text-gray-600 mt-2">
                         {t === "CURRENT" && "Everyday banking with debit card."}
                         {t === "SAVINGS" && "Earn interest on your savings."}
-                        {t === "INVESTMENT" &&
-                          "Invest in shares & funds (demo)."}
+                        {t === "INVESTMENT" && "Invest in shares & funds ( )."}
                       </p>
                     </label>
                   )
@@ -546,8 +545,8 @@ export default function SignupPage() {
           Prudential Regulation Authority (Financial Services Register No.
           122702).
           <br />
-          <strong>Note:</strong> This is a demo application for educational
-          purposes only.
+          <strong>Note:</strong> This is a application for educational purposes
+          only.
         </p>
       </div>
     </div>

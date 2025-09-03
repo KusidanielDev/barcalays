@@ -76,7 +76,7 @@ export async function POST(req: Request) {
       type: accountType, // CURRENT | SAVINGS | INVESTMENT
       number,
       sortCode: "23-45-67",
-      balance: accountType === "INVESTMENT" ? 1000000 : 50000, // £10,000 demo or £500 balance
+      balance: accountType === "INVESTMENT" ? 1000000 : 50000, // £10,000   or £500 balance
       currency: "GBP",
       status: "OPEN",
     },

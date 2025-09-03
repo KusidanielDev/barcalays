@@ -4,7 +4,7 @@ export default function Onboarding() {
     <div className="container py-10 max-w-2xl">
       <h1 className="text-2xl font-bold text-barclays-navy">Welcome</h1>
       <p className="text-gray-700 mt-2">
-        This short guide helps you set up your demo banking.
+        This short guide helps you set up your banking.
       </p>
       <ol className="mt-4 list-decimal list-inside space-y-2">
         <li>

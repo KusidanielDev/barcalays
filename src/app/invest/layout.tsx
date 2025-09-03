@@ -22,7 +22,7 @@ export default function InvestLayout({
         <header className="border-b bg-white">
           <div className="container h-14 flex items-center justify-between">
             <Link href="/invest" className="font-semibold text-barclays-navy">
-              Smart Investor (Demo)
+              Smart Investor ( )
             </Link>
             <div className="hidden md:flex items-center gap-5">
               {nav.map((n) => (

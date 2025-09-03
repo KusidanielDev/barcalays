@@ -4,7 +4,7 @@ export default function AppFooter() {
     <footer className="w-full bg-white border-t border-gray-200">
       <div className="container py-6 text-xs text-gray-600 flex flex-col md:flex-row gap-3 md:items-center justify-between">
         <div>
-          © {new Date().getFullYear()} Barclays (demo). All rights reserved.
+          © {new Date().getFullYear()} Barclays ( ). All rights reserved.
         </div>
         <div className="flex items-center gap-4">
           <a className="hover:underline" href="#">
