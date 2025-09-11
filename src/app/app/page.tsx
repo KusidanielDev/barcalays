@@ -22,6 +22,8 @@ type ClientTxn = {
   description: string;
   amount: number; // pence
   accountName: string;
+  status?: string;
+  adminMessage?: string | null;
 };
 type ClientHolding = {
   id: string;
@@ -65,6 +67,19 @@ function sparkPath(values: number[], width = 260, height = 64, pad = 6) {
   return d;
 }
 
+function badge(s?: string) {
+  switch (s) {
+    case "ERROR":
+      return "bg-red-50 text-red-700 border-red-200";
+    case "PENDING":
+      return "bg-amber-50 text-amber-700 border-amber-200";
+    case "REVERSED":
+      return "bg-gray-100 text-gray-700 border-gray-200";
+    default:
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  }
+}
+
 /** ---------- Deterministic price anchors (for charts/PL only) ---------- */
 const BASE: Record<string, number> = {
   AAPL: 189.12,
@@ -96,6 +111,7 @@ export default async function Dashboard() {
     ? await prisma.user.findUnique({ where: { email } })
     : null;
   const displayName =
+    (user as any)?.fullName ||
     user?.name ||
     session?.user?.name ||
     (email ? email.split("@")[0] : "there");
@@ -186,13 +202,15 @@ export default async function Dashboard() {
   const monthlyReturnsP = latestReturns?.amount ?? 0;
   const monthlyDividendsP = latestDivs?.amount ?? 0;
 
-  // Recent transactions
+  // Recent transactions (now include status & adminMessage)
   const txns: ClientTxn[] = (txDb ?? []).slice(0, 12).map((t) => ({
     id: t.id,
     postedAt: t.postedAt.toISOString(),
     description: t.description,
     amount: t.amount,
     accountName: t.account.name,
+    status: (t as any).status, // TxStatus enum in schema
+    adminMessage: (t as any).adminMessage ?? null,
   }));
 
   // Sparkline
@@ -237,6 +255,7 @@ export default async function Dashboard() {
                 <Link href="/app/payments" className="btn-primary">
                   New payment
                 </Link>
+
                 <Link href="/app/transactions" className="btn-secondary">
                   View all transactions
                 </Link>
@@ -360,7 +379,7 @@ export default async function Dashboard() {
           </div>
         </div>
 
-        {/* Recent activity */}
+        {/* Recent activity (now shows status badge + optional adminMessage) */}
         <section className="card overflow-hidden">
           <div className="font-semibold mb-3">Recent activity</div>
           <div className="divide-y">
@@ -370,8 +389,24 @@ export default async function Dashboard() {
                   key={t.id}
                   className="py-2 flex items-center justify-between"
                 >
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{t.description}</div>
+                  <div className="min-w-0 pr-3">
+                    <div className="flex items-center gap-2 font-medium truncate">
+                      <span className="truncate">{t.description}</span>
+                      {t.status && (
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide border ${badge(
+                            t.status
+                          )}`}
+                        >
+                          {t.status}
+                        </span>
+                      )}
+                    </div>
+                    {t.adminMessage && (
+                      <div className="text-xs text-red-700 truncate">
+                        {t.adminMessage}
+                      </div>
+                    )}
                     <div className="text-xs text-gray-500">
                       {fmtDT(t.postedAt)} · {t.accountName}
                     </div>
@@ -381,7 +416,8 @@ export default async function Dashboard() {
                       t.amount < 0 ? "text-red-600" : "text-green-700"
                     }`}
                   >
-                    £{(t.amount / 100).toFixed(2)}
+                    £{(Math.abs(t.amount) / 100).toFixed(2)}{" "}
+                    {t.amount < 0 ? "out" : "in"}
                   </div>
                 </div>
               ))

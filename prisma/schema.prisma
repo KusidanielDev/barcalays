@@ -1,4 +1,5 @@
 // FILE: prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,22 +9,59 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// =========================
-// Core banking models
-// =========================
+// ---------- Enums ----------
+enum Role {
+  USER
+  ADMIN
+}
 
+enum TxStatus {
+  POSTED
+  PENDING
+  ERROR
+  REVERSED
+}
+
+enum PayStatus {
+  PENDING_OTP
+  COMPLETED
+  FAILED
+}
+
+enum PayMethod {
+  BANK
+  INTERNAL
+  VENDOR
+}
+
+enum Vendor {
+  PAYPAL
+  WISE
+  REVOLUT
+}
+
+enum IncomeInterval {
+  WEEKLY
+  MONTHLY
+}
+
+// ---------- Core banking models ----------
 model User {
   id            String   @id @default(cuid())
+  // keep legacy fields you already reference elsewhere
   name          String?
   email         String   @unique
   passwordHash  String
-  role          String   @default("USER") // "USER" | "ADMIN"
+  role          String   @default("USER") // keep legacy string role
   approved      Boolean  @default(false)
-  status        String   @default("APPROVED") // "PENDING" | "APPROVED" | "REJECTED"
+  status        String   @default("APPROVED")
   phone         String?
   alertsEnabled Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  // additive field
+  fullName      String?
 
   accounts         Account[]
   sessions         Session[]
@@ -36,6 +74,7 @@ model User {
   budgets          Budget[]
   goals            Goal[]
   supportThreads   SupportThread[]
+  incomes          RecurringIncome[]
 }
 
 model Account {
@@ -48,20 +87,23 @@ model Account {
   balance   Int
   currency  String   @default("GBP")
   createdAt DateTime @default(now())
-  status    String   @default("PENDING") // "PENDING" | "OPEN" | "FROZEN" | "CLOSED"
+  status    String   @default("PENDING") // PENDING | OPEN | FROZEN | CLOSED
 
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions Transaction[]
 
-  // Named relations for clarity/symmetry
+  // keep legacy relation names
   paymentsFrom   Payment[]       @relation("AccountPayments")
   standingOrders StandingOrder[] @relation("AccountStandingOrders")
   cards          Card[]          @relation("AccountCards")
 
-  // Investing back-relations
+  // investing back-relations
   holdings       Holding[]
   investOrders   InvestOrder[]
   investCashTxns InvestCashTxn[]
+
+  // recurring income
+  incomes        RecurringIncome[]
 }
 
 model Transaction {
@@ -71,8 +113,12 @@ model Transaction {
   description  String
   amount       Int
   balanceAfter Int
+  status       TxStatus @default(POSTED)
+  adminMessage String?
 
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, postedAt])
 }
 
 model Session {
@@ -107,20 +153,25 @@ model Payee {
 }
 
 model Payment {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   userId        String
   fromAccountId String
   payeeId       String?
   amountPence   Int
   description   String?
-  isExternal    Boolean  @default(false)
-  status        String   @default("PENDING_OTP") // "PENDING_OTP" | "COMPLETED" | "FAILED"
-  createdAt     DateTime @default(now())
+  isExternal    Boolean   @default(false)
+  status        PayStatus @default(PENDING_OTP)
+  method        PayMethod @default(BANK)
+  vendor        Vendor?
+  vendorHandle  String?
+  createdAt     DateTime  @default(now())
   otpCode       String?
 
   user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   fromAccount Account @relation("AccountPayments", fields: [fromAccountId], references: [id], onDelete: Cascade)
   payee       Payee?  @relation(fields: [payeeId], references: [id])
+
+  @@index([userId, createdAt])
 }
 
 model AuditLog {
@@ -130,7 +181,7 @@ model AuditLog {
   ip        String?
   userAgent String?
   createdAt DateTime @default(now())
-  meta      String? // stringified JSON
+  meta      String?
 
   user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -156,7 +207,7 @@ model Card {
   userId    String
   accountId String
   last4     String
-  status    String   @default("ACTIVE") // "ACTIVE" | "FROZEN"
+  status    String   @default("ACTIVE")
   createdAt DateTime @default(now())
 
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -231,17 +282,32 @@ model SupportMessage {
   thread SupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 }
 
-// =========================
-// Investing (append below)
-// =========================
+// ---------- Recurring Income ----------
+model RecurringIncome {
+  id            String         @id @default(cuid())
+  userId        String
+  accountId     String
+  name          String
+  amountPence   Int
+  interval      IncomeInterval @default(MONTHLY)
+  nextRunAt     DateTime
+  active        Boolean        @default(true)
+  lastRunAt     DateTime?
 
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, active, nextRunAt])
+}
+
+// ---------- Investing (kept) ----------
 model Security {
   id        String   @id @default(cuid())
   symbol    String   @unique
   name      String
   exchange  String?
   currency  String   @default("GBP")
-  kind      String   @default("EQUITY") // EQUITY | ETF | FUND | BOND | TRUST
+  kind      String   @default("EQUITY")
   createdAt DateTime @default(now())
 
   prices   PricePoint[]
@@ -278,11 +344,11 @@ model InvestOrder {
   id           String   @id @default(cuid())
   accountId    String
   securityId   String
-  side         String   // BUY | SELL
-  orderType    String   // MARKET | LIMIT
+  side         String
+  orderType    String
   quantity     Decimal  @db.Decimal(38, 8)
   limitPence   Int?
-  status       String   @default("PENDING") // PENDING | FILLED | CANCELLED | REJECTED
+  status       String   @default("PENDING")
   feePence     Int?
   estCostPence Int?
   placedAt     DateTime @default(now())
@@ -297,7 +363,7 @@ model InvestOrder {
 model InvestCashTxn {
   id          String   @id @default(cuid())
   accountId   String
-  type        String   // DEPOSIT | WITHDRAWAL | DIVIDEND | FEE | INTEREST
+  type        String
   amountPence Int
   postedAt    DateTime @default(now())
   note        String?

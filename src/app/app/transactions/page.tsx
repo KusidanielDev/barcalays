@@ -60,28 +60,59 @@ export default function TransactionsPage() {
           </a>
         )}
       </div>
+
       <div className="card mt-4 overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-gray-500">
-              <th className="py-2">Date</th>
-              <th>Description</th>
-              <th className="text-right">Amount</th>
+              <th className="py-2 pr-3">Date</th>
+              <th className="py-2 pr-3">Description</th>
+              <th className="py-2 pr-3">Status</th>
+              <th className="py-2 pr-3">Admin msg</th>
+              <th className="py-2 pr-3 text-right">Amount</th>
+              <th className="py-2 text-right">Balance after</th>
             </tr>
           </thead>
           <tbody>
             {filtered.map((t: any) => (
               <tr key={t.id} className="border-t">
-                <td className="py-2">
-                  {new Date(t.postedAt).toLocaleDateString("en-GB")}
+                <td className="py-2 pr-3 whitespace-nowrap">
+                  {new Date(t.postedAt).toLocaleDateString("en-GB")}{" "}
+                  <span className="text-gray-500">
+                    {new Date(t.postedAt).toLocaleTimeString("en-GB", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
                 </td>
-                <td>{t.description}</td>
-                <td className="text-right">{(t.amount / 100).toFixed(2)}</td>
+                <td className="pr-3">{t.description}</td>
+                <td className="pr-3">
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide border ${badge(
+                      t.status
+                    )}`}
+                  >
+                    {t.status || "POSTED"}
+                  </span>
+                </td>
+                <td className="pr-3 max-w-[320px] truncate">
+                  {t.adminMessage || ""}
+                </td>
+                <td
+                  className={`pr-3 text-right tabular-nums ${
+                    t.amount < 0 ? "text-red-600" : "text-green-700"
+                  }`}
+                >
+                  £{(Math.abs(t.amount) / 100).toFixed(2)}
+                </td>
+                <td className="text-right tabular-nums">
+                  £{(t.balanceAfter / 100).toFixed(2)}
+                </td>
               </tr>
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={3} className="py-6 text-center text-gray-500">
+                <td colSpan={6} className="py-6 text-center text-gray-500">
                   No transactions.
                 </td>
               </tr>
@@ -91,4 +122,17 @@ export default function TransactionsPage() {
       </div>
     </div>
   );
+}
+
+function badge(s: string) {
+  switch (s) {
+    case "ERROR":
+      return "bg-red-50 text-red-700 border-red-200";
+    case "PENDING":
+      return "bg-amber-50 text-amber-700 border-amber-200";
+    case "REVERSED":
+      return "bg-gray-100 text-gray-700 border-gray-200";
+    default:
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  }
 }

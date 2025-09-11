@@ -1,21 +1,23 @@
+// FILE: src/app/api/payments/external/confirm/route.ts
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export async function POST(req: Request) {
+  // Auth (from your old code)
   const session = await auth();
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json().catch(() => ({}));
+  const body = await req.json().catch(() => ({} as any));
   const paymentId = String(body.paymentId || "");
   const otp = String(body.otp || "");
-
   if (!paymentId || !otp) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
 
+  // Find payment (external bank or vendor), still pending
   const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
   if (!payment)
     return NextResponse.json({ error: "Payment not found" }, { status: 404 });
@@ -26,7 +28,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid OTP" }, { status: 400 });
   }
 
-  // Use amountPence from your schema
   const amt = payment.amountPence;
   if (!Number.isFinite(amt) || amt <= 0) {
     return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
@@ -41,6 +42,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Insufficient funds" }, { status: 400 });
   }
 
+  // Prefer a vendor-flavored description when applicable
+  const desc =
+    payment.description ||
+    (payment.method === "VENDOR" && payment.vendor && payment.vendorHandle
+      ? `${payment.vendor} payment to ${payment.vendorHandle}`
+      : "External payment");
+
   await prisma.$transaction(async (tx) => {
     const newBal = from.balance - amt;
 
@@ -53,9 +61,10 @@ export async function POST(req: Request) {
       data: {
         accountId: from.id,
         postedAt: new Date(),
-        description: payment.description || "External payment",
-        amount: -amt, // ledger keeps pence; negative for outflow
+        description: desc,
+        amount: -amt, // outflow in pence
         balanceAfter: newBal,
+        status: "POSTED", // merged-in enum status
       },
     });
 
@@ -73,6 +82,9 @@ export async function POST(req: Request) {
           amountPence: amt,
           fromAccountId: from.id,
           external: true,
+          method: payment.method ?? null, // BANK | VENDOR
+          vendor: payment.vendor ?? null, // PAYPAL | WISE | REVOLUT
+          vendorHandle: payment.vendorHandle ?? null,
         }),
       },
     });
