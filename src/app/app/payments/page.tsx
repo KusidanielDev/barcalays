@@ -3,7 +3,6 @@
 
 import useSWR, { useSWRConfig } from "swr";
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 
 type Account = { id: string; name: string; number: string; balance: number };
 type Payee = {
@@ -20,43 +19,45 @@ const fetcher = (u: string) =>
   fetch(u, { cache: "no-store" }).then((r) => r.json());
 
 export default function PaymentsPage() {
-  const router = useRouter();
   const { mutate } = useSWRConfig();
-
-  // Load accounts & payees
   const { data: a } = useSWR<ResA>("/api/accounts", fetcher);
   const { data: p } = useSWR<ResP>("/api/payees", fetcher);
+
   const accounts = a?.accounts || [];
   const payees = p?.payees || [];
 
   // UI state
-  const [tab, setTab] = useState<"external" | "internal" | "vendor">(
+  const [tab, setTab] = useState<"external" | "vendor" | "internal">(
     "external"
   );
-  const [mode, setMode] = useState<"saved" | "new">("saved"); // saved vs new payee
+  const [mode, setMode] = useState<"saved" | "new">("saved");
 
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // OTP flow
+  // OTP state
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [pendingKind, setPendingKind] = useState<
     "EXTERNAL" | "EXTERNAL_VENDOR" | null
   >(null);
   const [otp, setOtp] = useState("");
 
-  // Busy states
+  // Busy flags
   const [busyInternal, setBusyInternal] = useState(false);
   const [busyExternal, setBusyExternal] = useState(false);
   const [busyVendor, setBusyVendor] = useState(false);
   const [busyOTP, setBusyOTP] = useState(false);
 
-  // Options
-  const accountOptions = useMemo(
+  // For cache refresh on tx page after confirm
+  const [lastFromAccountId, setLastFromAccountId] = useState<string | null>(
+    null
+  );
+
+  const fromOptions = useMemo(
     () =>
-      accounts.map((ac) => ({
-        id: ac.id,
-        label: `${ac.name} • ${ac.number} • £${(ac.balance / 100).toFixed(2)}`,
+      accounts.map((a) => ({
+        id: a.id,
+        label: `${a.name} • ${a.number} • £${(a.balance / 100).toFixed(2)}`,
       })),
     [accounts]
   );
@@ -66,51 +67,57 @@ export default function PaymentsPage() {
     setError(null);
   }
 
-  /** ---------- INTERNAL TRANSFER ---------- */
+  /* =========================
+   * INTERNAL TRANSFER
+   * ========================= */
   async function submitInternal(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     clearNotices();
     setBusyInternal(true);
+
     try {
       const fd = new FormData(e.currentTarget);
-      const fromAccountId = String(fd.get("from") || "");
-      const toAccountId = String(fd.get("to") || "");
-      const amountGBP = Number(String(fd.get("amount") || "0"));
-      const description = String(fd.get("desc") || "Transfer");
+      const from = String(fd.get("from") || "");
+      const to = String(fd.get("to") || "");
+      const amountStr = String(fd.get("amount") || "0");
+      const desc = String(fd.get("desc") || "Transfer");
 
-      if (!fromAccountId || !toAccountId || fromAccountId === toAccountId) {
+      const amount = Math.round(Number(amountStr) * 100);
+      if (!from || !to || from === to) {
         setError("Choose two different accounts.");
         return;
       }
-      if (!(amountGBP > 0)) {
+      if (!(amount > 0)) {
         setError("Enter a valid amount greater than 0.");
         return;
       }
+
+      setLastFromAccountId(from);
 
       const res = await fetch("/api/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           kind: "INTERNAL",
-          fromAccountId,
-          toAccountId,
-          amountPence: Math.round(amountGBP * 100),
-          description,
+          fromAccountId: from,
+          toAccountId: to,
+          amountPence: amount,
+          description: desc,
         }),
       });
       const j = await res.json();
+
       if (!res.ok) {
         setError(j?.error || "Transfer failed");
         return;
       }
 
       setMsg("Transfer completed.");
+      // refresh account balances & tx for both accounts
+      mutate("/api/accounts");
+      if (from) mutate(`/api/accounts/${from}/transactions`);
+      if (to) mutate(`/api/accounts/${to}/transactions`);
       (e.target as HTMLFormElement).reset();
-
-      // reflect balances/SSR pages immediately
-      await Promise.all([mutate("/api/accounts")]);
-      router.refresh();
-      router.push("/app/transactions");
     } catch (err: any) {
       setError(err?.message || "Transfer failed");
     } finally {
@@ -118,7 +125,9 @@ export default function PaymentsPage() {
     }
   }
 
-  /** ---------- EXTERNAL BANK (OTP) ---------- */
+  /* =========================
+   * EXTERNAL BANK PAYMENT (saved or new payee) — uses OTP
+   * ========================= */
   async function submitExternal(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     clearNotices();
@@ -126,26 +135,29 @@ export default function PaymentsPage() {
 
     try {
       const fd = new FormData(e.currentTarget);
-      const fromAccountId = String(fd.get("from") || "");
-      const amountGBP = Number(String(fd.get("amount") || "0"));
-      const description = String(fd.get("desc") || "Payment");
-      const formMode = String(fd.get("mode") || mode); // if radio not touched
+      const from = String(fd.get("from") || "");
+      const amountStr = String(fd.get("amount") || "0");
+      const desc = String(fd.get("desc") || "Payment");
+      const formMode = String(fd.get("mode") || mode);
       const isNew = formMode === "new";
 
-      if (!fromAccountId) {
+      const amount = Math.round(Number(amountStr) * 100);
+      if (!from) {
         setError("Choose a source account.");
         return;
       }
-      if (!(amountGBP > 0)) {
+      if (!(amount > 0)) {
         setError("Enter a valid amount greater than 0.");
         return;
       }
 
+      setLastFromAccountId(from);
+
       const payload: any = {
         kind: "EXTERNAL",
-        fromAccountId,
-        amountPence: Math.round(amountGBP * 100),
-        description,
+        fromAccountId: from,
+        amountPence: amount,
+        description: desc,
       };
 
       if (isNew) {
@@ -176,6 +188,7 @@ export default function PaymentsPage() {
         body: JSON.stringify(payload),
       });
       const j = await res.json();
+
       if (!res.ok) {
         setError(j?.error || "Payment failed");
         return;
@@ -184,7 +197,9 @@ export default function PaymentsPage() {
       // Expect { pendingPaymentId }
       setPendingId(j.pendingPaymentId);
       setPendingKind("EXTERNAL");
-      setMsg("Enter the OTP sent to your device to complete the payment.");
+      setMsg("Enter the OTP sent to your device.");
+      // If a new payee was created, refresh
+      mutate("/api/payees");
     } catch (err: any) {
       setError(err?.message || "Payment failed");
     } finally {
@@ -192,7 +207,9 @@ export default function PaymentsPage() {
     }
   }
 
-  /** ---------- EXTERNAL VENDOR (OTP) ---------- */
+  /* =========================
+   * VENDOR PAYMENT (PayPal / Wise / Revolut) — uses OTP
+   * ========================= */
   async function submitVendor(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     clearNotices();
@@ -200,33 +217,36 @@ export default function PaymentsPage() {
 
     try {
       const fd = new FormData(e.currentTarget);
-      const fromAccountId = String(fd.get("from") || "");
-      const amountGBP = Number(String(fd.get("amount") || "0"));
-      const description = String(fd.get("desc") || "");
+      const from = String(fd.get("from") || "");
+      const amountStr = String(fd.get("amount") || "0");
+      const desc = String(fd.get("desc") || "");
       const vendor = String(fd.get("vendor") || "PAYPAL");
       const vendorHandle = String(fd.get("vendorHandle") || "");
 
-      if (!fromAccountId) {
+      const amount = Math.round(Number(amountStr) * 100);
+      if (!from) {
         setError("Choose a source account.");
         return;
       }
-      if (!(amountGBP > 0)) {
+      if (!(amount > 0)) {
         setError("Enter a valid amount greater than 0.");
         return;
       }
-      if (!vendorHandle || vendorHandle.length < 3) {
-        setError("Enter a valid vendor handle/email.");
+      if (!vendorHandle) {
+        setError("Enter the vendor handle/email.");
         return;
       }
+
+      setLastFromAccountId(from);
 
       const res = await fetch("/api/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           kind: "EXTERNAL_VENDOR",
-          fromAccountId,
-          amountPence: Math.round(amountGBP * 100),
-          description,
+          fromAccountId: from,
+          amountPence: amount,
+          description: desc,
           vendor,
           vendorHandle,
         }),
@@ -239,9 +259,7 @@ export default function PaymentsPage() {
 
       setPendingId(j.pendingPaymentId);
       setPendingKind("EXTERNAL_VENDOR");
-      setMsg(
-        "Enter the OTP sent to your device to complete the vendor payment."
-      );
+      setMsg("Enter the OTP sent to your device.");
     } catch (err: any) {
       setError(err?.message || "Vendor payment failed");
     } finally {
@@ -249,7 +267,9 @@ export default function PaymentsPage() {
     }
   }
 
-  /** ---------- OTP CONFIRM ---------- */
+  /* =========================
+   * OTP CONFIRM (bank vs vendor endpoints use different payload keys)
+   * ========================= */
   async function confirm(e: React.FormEvent) {
     e.preventDefault();
     clearNotices();
@@ -265,16 +285,17 @@ export default function PaymentsPage() {
         return;
       }
 
-      // IMPORTANT: send { paymentId, otp } (not { id })
-      const url =
-        pendingKind === "EXTERNAL_VENDOR"
-          ? "/api/payments/external/confirm"
-          : "/api/payments/confirm";
+      let url = "/api/payments/confirm";
+      let body: any = { id: pendingId, otp };
+      if (pendingKind === "EXTERNAL_VENDOR") {
+        url = "/api/payments/external/confirm";
+        body = { paymentId: pendingId, otp };
+      }
 
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentId: pendingId, otp }),
+        body: JSON.stringify(body),
       });
       const j = await res.json();
 
@@ -287,11 +308,10 @@ export default function PaymentsPage() {
       setPendingId(null);
       setPendingKind(null);
       setOtp("");
-
-      // Refresh client APIs and SSR pages, then go to transactions
-      await Promise.all([mutate("/api/accounts"), mutate("/api/payees")]);
-      router.refresh();
-      router.push("/app/transactions");
+      // refresh balances & relevant transactions
+      mutate("/api/accounts");
+      if (lastFromAccountId)
+        mutate(`/api/accounts/${lastFromAccountId}/transactions`);
     } catch (err: any) {
       setError(err?.message || "Confirmation failed");
     } finally {
@@ -319,7 +339,7 @@ export default function PaymentsPage() {
         </div>
 
         {/* Tabs */}
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-4 flex gap-2">
           <button
             onClick={() => {
               setTab("external");
@@ -329,7 +349,7 @@ export default function PaymentsPage() {
               tab === "external" ? "bg-gray-100 border-barclays-blue" : ""
             }`}
           >
-            To someone (bank payee)
+            External bank (payee)
           </button>
           <button
             onClick={() => {
@@ -351,11 +371,11 @@ export default function PaymentsPage() {
               tab === "internal" ? "bg-gray-100 border-barclays-blue" : ""
             }`}
           >
-            Between your accounts
+            Internal transfer
           </button>
         </div>
 
-        {/* ---------- EXTERNAL (BANK) ---------- */}
+        {/* EXTERNAL BANK */}
         {tab === "external" && (
           <div className="mt-4 grid gap-4">
             <form
@@ -369,12 +389,9 @@ export default function PaymentsPage() {
                   name="from"
                   required
                   disabled={busyExternal || !!pendingId}
-                  defaultValue=""
                 >
-                  <option value="" disabled>
-                    Select
-                  </option>
-                  {accountOptions.map((opt) => (
+                  <option value="">Select</option>
+                  {fromOptions.map((opt) => (
                     <option key={opt.id} value={opt.id}>
                       {opt.label}
                     </option>
@@ -383,8 +400,8 @@ export default function PaymentsPage() {
               </div>
 
               <div className="md:col-span-2">
-                <label className="text-sm text-gray-600">Payment target</label>
-                <div className="flex gap-3">
+                <label className="text-sm text-gray-600">Payment method</label>
+                <div className="flex gap-2">
                   <label className="inline-flex items-center gap-2">
                     <input
                       type="radio"
@@ -393,7 +410,7 @@ export default function PaymentsPage() {
                       checked={mode === "saved"}
                       onChange={() => setMode("saved")}
                       disabled={busyExternal || !!pendingId}
-                    />
+                    />{" "}
                     Saved payee
                   </label>
                   <label className="inline-flex items-center gap-2">
@@ -404,7 +421,7 @@ export default function PaymentsPage() {
                       checked={mode === "new"}
                       onChange={() => setMode("new")}
                       disabled={busyExternal || !!pendingId}
-                    />
+                    />{" "}
                     New payee
                   </label>
                 </div>
@@ -413,7 +430,7 @@ export default function PaymentsPage() {
               {/* Saved payee select */}
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">
-                  Select payee (if saved)
+                  Select saved payee
                 </label>
                 <select
                   name="payeeId"
@@ -421,9 +438,9 @@ export default function PaymentsPage() {
                   disabled={mode === "new" || busyExternal || !!pendingId}
                 >
                   <option value="">—</option>
-                  {payees.map((py) => (
-                    <option key={py.id} value={py.id}>
-                      {py.name} • {py.sortCode} {py.accountNumber}
+                  {payees.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} • {p.sortCode} {p.accountNumber}
                     </option>
                   ))}
                 </select>
@@ -436,7 +453,6 @@ export default function PaymentsPage() {
                   name="name"
                   placeholder="Recipient name"
                   disabled={mode !== "new" || busyExternal || !!pendingId}
-                  minLength={2}
                 />
               </div>
               <div>
@@ -445,7 +461,6 @@ export default function PaymentsPage() {
                   name="sort"
                   placeholder="12-34-56"
                   disabled={mode !== "new" || busyExternal || !!pendingId}
-                  pattern="^\d{2}-\d{2}-\d{2}$"
                 />
               </div>
               <div>
@@ -454,7 +469,6 @@ export default function PaymentsPage() {
                   name="acc"
                   placeholder="12345678"
                   disabled={mode !== "new" || busyExternal || !!pendingId}
-                  pattern="^\d{8}$"
                 />
               </div>
               <div>
@@ -498,7 +512,7 @@ export default function PaymentsPage() {
               </div>
             </form>
 
-            {/* OTP confirm step (Bank) */}
+            {/* OTP confirm step */}
             {pendingId && pendingKind === "EXTERNAL" && (
               <form
                 className="grid md:grid-cols-[1fr_auto] gap-2"
@@ -508,11 +522,8 @@ export default function PaymentsPage() {
                 <input
                   value={otp}
                   onChange={(e) => setOtp(e.target.value)}
-                  placeholder="Enter 6-digit OTP"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  required
+                  placeholder="Enter OTP"
+                  disabled={busyOTP}
                 />
                 <button
                   className={`btn-primary ${busyOTP ? "opacity-60" : ""}`}
@@ -525,7 +536,7 @@ export default function PaymentsPage() {
           </div>
         )}
 
-        {/* ---------- VENDOR (PAYPAL/WISE/REVOLUT) ---------- */}
+        {/* VENDOR */}
         {tab === "vendor" && (
           <div className="mt-4 grid gap-4">
             <form
@@ -539,19 +550,15 @@ export default function PaymentsPage() {
                   name="from"
                   required
                   disabled={busyVendor || !!pendingId}
-                  defaultValue=""
                 >
-                  <option value="" disabled>
-                    Select
-                  </option>
-                  {accountOptions.map((opt) => (
+                  <option value="">Select</option>
+                  {fromOptions.map((opt) => (
                     <option key={opt.id} value={opt.id}>
                       {opt.label}
                     </option>
                   ))}
                 </select>
               </div>
-
               <div>
                 <label className="text-sm text-gray-600">Amount (£)</label>
                 <input
@@ -564,28 +571,31 @@ export default function PaymentsPage() {
                 />
               </div>
 
-              <div>
-                <label className="text-sm text-gray-600">Vendor</label>
-                <select
-                  name="vendor"
-                  required
-                  disabled={busyVendor || !!pendingId}
-                  defaultValue="PAYPAL"
-                >
-                  <option value="PAYPAL">PayPal</option>
-                  <option value="WISE">Wise</option>
-                  <option value="REVOLUT">Revolut</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-sm text-gray-600">Handle / Email</label>
-                <input
-                  name="vendorHandle"
-                  placeholder="PayPal email or vendor username"
-                  required
-                  disabled={busyVendor || !!pendingId}
-                />
+              <div className="md:col-span-2 grid md:grid-cols-3 gap-4">
+                <div>
+                  <label className="text-sm text-gray-600">Vendor</label>
+                  <select
+                    name="vendor"
+                    required
+                    disabled={busyVendor || !!pendingId}
+                    defaultValue="PAYPAL"
+                  >
+                    <option value="PAYPAL">PayPal</option>
+                    <option value="WISE">Wise</option>
+                    <option value="REVOLUT">Revolut</option>
+                  </select>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-sm text-gray-600">
+                    Handle / Email
+                  </label>
+                  <input
+                    name="vendorHandle"
+                    placeholder="PayPal email or vendor username"
+                    required
+                    disabled={busyVendor || !!pendingId}
+                  />
+                </div>
               </div>
 
               <div className="md:col-span-2">
@@ -594,7 +604,7 @@ export default function PaymentsPage() {
                 </label>
                 <input
                   name="desc"
-                  placeholder="e.g. PayPal purchase"
+                  placeholder="e.g. PayPal to @someone"
                   disabled={busyVendor || !!pendingId}
                 />
               </div>
@@ -609,7 +619,7 @@ export default function PaymentsPage() {
               </div>
             </form>
 
-            {/* OTP confirm step (Vendor) */}
+            {/* OTP confirm */}
             {pendingId && pendingKind === "EXTERNAL_VENDOR" && (
               <form
                 className="grid md:grid-cols-[1fr_auto] gap-2"
@@ -619,11 +629,8 @@ export default function PaymentsPage() {
                 <input
                   value={otp}
                   onChange={(e) => setOtp(e.target.value)}
-                  placeholder="Enter 6-digit OTP"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  required
+                  placeholder="Enter OTP"
+                  disabled={busyOTP}
                 />
                 <button
                   className={`btn-primary ${busyOTP ? "opacity-60" : ""}`}
@@ -636,7 +643,7 @@ export default function PaymentsPage() {
           </div>
         )}
 
-        {/* ---------- INTERNAL ---------- */}
+        {/* INTERNAL */}
         {tab === "internal" && (
           <form
             className="mt-4 grid md:grid-cols-2 gap-4"
@@ -645,16 +652,9 @@ export default function PaymentsPage() {
           >
             <div>
               <label className="text-sm text-gray-600">From</label>
-              <select
-                name="from"
-                required
-                disabled={busyInternal}
-                defaultValue=""
-              >
-                <option value="" disabled>
-                  Select
-                </option>
-                {accountOptions.map((opt) => (
+              <select name="from" required disabled={busyInternal}>
+                <option value="">Select</option>
+                {fromOptions.map((opt) => (
                   <option key={opt.id} value={opt.id}>
                     {opt.label}
                   </option>
@@ -663,16 +663,9 @@ export default function PaymentsPage() {
             </div>
             <div>
               <label className="text-sm text-gray-600">To</label>
-              <select
-                name="to"
-                required
-                disabled={busyInternal}
-                defaultValue=""
-              >
-                <option value="" disabled>
-                  Select
-                </option>
-                {accountOptions.map((opt) => (
+              <select name="to" required disabled={busyInternal}>
+                <option value="">Select</option>
+                {fromOptions.map((opt) => (
                   <option key={opt.id} value={opt.id}>
                     {opt.label}
                   </option>
