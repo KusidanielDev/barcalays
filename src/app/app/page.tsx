@@ -6,6 +6,7 @@ import InvestSection from "./parts/InvestSection";
 import StocksTicker from "./parts/StocksTicker";
 import StocksMultiChart from "./parts/StocksMultiChart";
 import IncomeSummary from "./parts/IncomeSummary";
+import { formatMoney } from "@/lib/format";
 
 /** ---------- Types ---------- */
 type ClientAccount = {
@@ -13,15 +14,16 @@ type ClientAccount = {
   name: string;
   type: string;
   number: string;
-  balance: number; // pence (cash)
+  balance: number; // minor units
   currency: string;
 };
 type ClientTxn = {
   id: string;
   postedAt: string;
   description: string;
-  amount: number; // pence
+  amount: number; // minor units
   accountName: string;
+  accountCurrency: string; // <-- added
   status?: string;
   adminMessage?: string | null;
 };
@@ -36,11 +38,6 @@ type ClientHolding = {
 };
 
 /** ---------- Helpers ---------- */
-const fmtGBP = (pence: number) =>
-  new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
-    (pence ?? 0) / 100
-  );
-
 function fmtDT(when: string | Date) {
   const d = typeof when === "string" ? new Date(when) : when;
   return d.toLocaleString("en-GB", {
@@ -168,7 +165,7 @@ export default async function Dashboard() {
     }));
   }
 
-  // Compute holdings value
+  // Compute holdings value (in the same minor units convention)
   const holdingsByAccountValueP: Record<string, number> = {};
   for (const h of holdings) {
     const sym = h.security.symbol.toUpperCase();
@@ -188,13 +185,18 @@ export default async function Dashboard() {
     }
   }
 
-  // Net worth
+  // Net worth: only meaningful if all accounts share the same currency
+  const currencySet = new Set(accounts.map((a) => a.currency));
+  const sameCurrency = currencySet.size <= 1;
   const netWorth = accounts.reduce(
     (s, a) => s + (displayTotalById[a.id] || 0),
     0
   );
+  const netWorthLabel = sameCurrency
+    ? formatMoney(netWorth, accounts[0]?.currency || "GBP")
+    : "— (mixed currencies)";
 
-  // Latest incomes for the IncomeSummary widget
+  // Latest incomes for IncomeSummary (left untouched; component may format its own way)
   const latestReturns = (txDb ?? []).find((t) =>
     /Monthly returns/i.test(t.description)
   );
@@ -202,20 +204,21 @@ export default async function Dashboard() {
   const monthlyReturnsP = latestReturns?.amount ?? 0;
   const monthlyDividendsP = latestDivs?.amount ?? 0;
 
-  // Recent transactions (now include status & adminMessage)
+  // Recent transactions (currency-aware)
   const txns: ClientTxn[] = (txDb ?? []).slice(0, 12).map((t) => ({
     id: t.id,
     postedAt: t.postedAt.toISOString(),
     description: t.description,
     amount: t.amount,
     accountName: t.account.name,
-    status: (t as any).status, // TxStatus enum in schema
+    accountCurrency: t.account.currency, // <-- used for formatting
+    status: (t as any).status,
     adminMessage: (t as any).adminMessage ?? null,
   }));
 
   // Sparkline
   const sparkSeries = (() => {
-    const base = netWorth;
+    const base = sameCurrency ? netWorth : 0; // if mixed, series is still harmless
     if (!(txDb ?? []).length) return [base, base];
     const seq = [...txDb].reverse().map((t) => t.amount);
     const start = base - seq.reduce((s, v) => s + v, 0) * 0.2;
@@ -249,13 +252,12 @@ export default async function Dashboard() {
                 Welcome back, <span className="font-medium">{displayName}</span>
               </div>
               <div className="mt-1 text-2xl md:text-3xl font-semibold text-barclays-navy">
-                Net worth {fmtGBP(netWorth)}
+                Net worth {netWorthLabel}
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
                 <Link href="/app/payments" className="btn-primary">
                   New payment
                 </Link>
-
                 <Link href="/app/transactions" className="btn-secondary">
                   View all transactions
                 </Link>
@@ -336,13 +338,14 @@ export default async function Dashboard() {
                         {a.name}
                       </div>
                       <div className="text-xl font-semibold">
-                        {fmtGBP(totalP)}
+                        {formatMoney(totalP, a.currency)}
                       </div>
                       <div className="text-xs text-gray-500 mt-1 truncate">
                         {isInvest
-                          ? `cash ${fmtGBP(a.balance)} • holdings ${fmtGBP(
-                              holdingsP
-                            )}`
+                          ? `cash ${formatMoney(
+                              a.balance,
+                              a.currency
+                            )} • holdings ${formatMoney(holdingsP, a.currency)}`
                           : `${a.number} • ${a.currency}`}
                       </div>
                     </Link>
@@ -365,12 +368,15 @@ export default async function Dashboard() {
                   className="rounded-2xl border p-4 hover:bg-gray-50 min-w-0"
                 >
                   <div className="text-sm text-gray-600 truncate">{a.name}</div>
-                  <div className="text-xl font-semibold">{fmtGBP(totalP)}</div>
+                  <div className="text-xl font-semibold">
+                    {formatMoney(totalP, a.currency)}
+                  </div>
                   <div className="text-xs text-gray-500 mt-1 truncate">
                     {isInvest
-                      ? `cash ${fmtGBP(a.balance)} • holdings ${fmtGBP(
-                          holdingsP
-                        )}`
+                      ? `cash ${formatMoney(
+                          a.balance,
+                          a.currency
+                        )} • holdings ${formatMoney(holdingsP, a.currency)}`
                       : `${a.number} • ${a.currency}`}
                   </div>
                 </Link>
@@ -379,7 +385,7 @@ export default async function Dashboard() {
           </div>
         </div>
 
-        {/* Recent activity (now shows status badge + optional adminMessage) */}
+        {/* Recent activity (currency-aware) */}
         <section className="card overflow-hidden">
           <div className="font-semibold mb-3">Recent activity</div>
           <div className="divide-y">
@@ -416,7 +422,7 @@ export default async function Dashboard() {
                       t.amount < 0 ? "text-red-600" : "text-green-700"
                     }`}
                   >
-                    £{(Math.abs(t.amount) / 100).toFixed(2)}{" "}
+                    {formatMoney(Math.abs(t.amount), t.accountCurrency)}{" "}
                     {t.amount < 0 ? "out" : "in"}
                   </div>
                 </div>

@@ -2,65 +2,71 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { TxStatus } from "@prisma/client";
 
-function rand4() {
-  return Math.floor(1000 + Math.random() * 9000).toString();
+/** helpers for number/sort-code */
+function rand(n: number) {
+  return Math.floor(Math.random() * n);
 }
-function makeNumber() {
-  return `${rand4()}${rand4()}${rand4()}`.slice(0, 10);
+function accountNumber8() {
+  return String(10_000_000 + rand(89_999_999));
 }
-function makeSort() {
-  return `${Math.floor(10 + Math.random() * 90)}-${Math.floor(
-    10 + Math.random() * 90
-  )}-${Math.floor(10 + Math.random() * 90)}`;
+function sortCode() {
+  const a = 10 + rand(90);
+  const b = 10 + rand(90);
+  const c = 10 + rand(90);
+  return `${a}-${b}-${c}`;
 }
 
 export async function POST(req: Request) {
   try {
     const session = await auth();
-    const email = session?.user?.email?.toLowerCase();
-    if (!email)
+    if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user)
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const body = await req.json().catch(() => null);
+    if (!body) {
+      return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    }
 
-    const body = await req.json();
-    const { name, type, initialDepositPence } = body as {
-      name: string;
-      type: "CURRENT" | "SAVINGS" | "INVESTMENT";
-      initialDepositPence?: number;
-    };
+    const name = (body.name || "Everyday Account").trim();
+    const type: "CURRENT" | "SAVINGS" | "INVESTMENT" = (
+      body.type || "CURRENT"
+    ).toUpperCase();
+    const currency = String(body.currency || "GBP").toUpperCase();
+    // Accept either pence/paise/cents or a major-unit float
+    const initialDepositPence: number =
+      typeof body.initialDepositPence === "number"
+        ? Math.max(0, Math.floor(body.initialDepositPence))
+        : typeof body.initialDepositMajor === "number"
+        ? Math.max(0, Math.round(body.initialDepositMajor * 100))
+        : 0;
 
-    if (!name || !type)
-      return NextResponse.json({ error: "Missing fields" }, { status: 400 });
-
-    const number = makeNumber();
-    const sortCode = makeSort();
-    const balance = Math.max(0, Math.floor(initialDepositPence ?? 0));
+    const number = accountNumber8();
 
     const acc = await prisma.account.create({
       data: {
-        userId: user.id,
+        userId: session.user.id,
         name,
         type,
         number,
-        sortCode,
-        balance,
-        currency: "GBP",
+        sortCode: sortCode(),
+        balance: initialDepositPence,
+        currency,
         status: "OPEN",
       },
     });
 
-    if (balance > 0) {
+    if (initialDepositPence > 0) {
       await prisma.transaction.create({
         data: {
           accountId: acc.id,
           postedAt: new Date(),
-          description: "Initial funding",
-          amount: balance,
-          balanceAfter: balance,
+          description: "Initial deposit",
+          amount: initialDepositPence,
+          balanceAfter: initialDepositPence,
+          status: TxStatus.POSTED,
         },
       });
     }

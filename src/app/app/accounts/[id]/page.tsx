@@ -3,12 +3,9 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { notFound } from "next/navigation";
+import { formatMoney } from "@/lib/format";
 
-/** ---------- Formatters ---------- */
-const fmtGBP = (pence: number) =>
-  new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
-    (pence ?? 0) / 100
-  );
+/** ---------- Date formatter (unchanged) ---------- */
 const fmtDT = (d: Date) =>
   d.toLocaleString("en-GB", {
     day: "2-digit",
@@ -65,6 +62,9 @@ export default async function AccountDetail({
     where: { id: params.id, userId: user.id },
   });
   if (!account) notFound();
+
+  // —— Currency-aware money formatter for THIS account ——
+  const fmt = (pence: number) => formatMoney(pence, account.currency);
 
   const isInvest = account.type === "INVESTMENT";
 
@@ -158,14 +158,11 @@ export default async function AccountDetail({
           </div>
           <div>
             <div className="text-sm text-gray-600">Balance</div>
-            {/* Show your exact total here */}
-            <div className="text-2xl font-semibold">
-              {fmtGBP(displayTotalP)}
-            </div>
+            {/* currency-aware */}
+            <div className="text-2xl font-semibold">{fmt(displayTotalP)}</div>
             {isInvest && (
               <div className="text-xs text-gray-600 mt-1">
-                Cash {fmtGBP(account.balance)} • Holdings{" "}
-                {fmtGBP(displayHoldingsP)}
+                Cash {fmt(account.balance)} • Holdings {fmt(displayHoldingsP)}
               </div>
             )}
           </div>
@@ -178,7 +175,7 @@ export default async function AccountDetail({
           <div className="flex items-center justify-between mb-2">
             <div className="font-semibold text-barclays-navy">Holdings</div>
             <div className="text-sm text-gray-600">
-              Market value {fmtGBP(holdingsMV)}
+              Market value {fmt(holdingsMV)}
             </div>
           </div>
 
@@ -197,7 +194,7 @@ export default async function AccountDetail({
                       }`}
                     >
                       {r.pnlP >= 0 ? "+" : ""}
-                      {fmtGBP(r.pnlP)}
+                      {fmt(r.pnlP)}
                     </div>
                   </div>
                   <div className="text-sm text-gray-600 truncate">{r.name}</div>
@@ -208,15 +205,15 @@ export default async function AccountDetail({
                     </div>
                     <div className="text-right">
                       <div className="text-gray-500">Value</div>
-                      <div className="font-medium">{fmtGBP(r.valP)}</div>
+                      <div className="font-medium">{fmt(r.valP)}</div>
                     </div>
                     <div>
                       <div className="text-gray-500">Avg cost</div>
-                      <div className="font-medium">{fmtGBP(r.avgP)}</div>
+                      <div className="font-medium">{fmt(r.avgP)}</div>
                     </div>
                     <div className="text-right">
                       <div className="text-gray-500">Est. price</div>
-                      <div className="font-medium">{fmtGBP(r.pxP)}</div>
+                      <div className="font-medium">{fmt(r.pxP)}</div>
                     </div>
                   </div>
                 </div>
@@ -247,16 +244,16 @@ export default async function AccountDetail({
                       <td className="py-2 font-medium">{r.sym}</td>
                       <td className="truncate pr-2">{r.name}</td>
                       <td className="text-right">{r.qty}</td>
-                      <td className="text-right">{fmtGBP(r.avgP)}</td>
-                      <td className="text-right">{fmtGBP(r.pxP)}</td>
-                      <td className="text-right">{fmtGBP(r.valP)}</td>
+                      <td className="text-right">{fmt(r.avgP)}</td>
+                      <td className="text-right">{fmt(r.pxP)}</td>
+                      <td className="text-right">{fmt(r.valP)}</td>
                       <td
                         className={`text-right font-medium ${
                           r.pnlP >= 0 ? "text-green-700" : "text-red-600"
                         }`}
                       >
                         {r.pnlP >= 0 ? "+" : ""}
-                        {fmtGBP(r.pnlP)}
+                        {fmt(r.pnlP)}
                       </td>
                     </tr>
                   ))}
@@ -265,7 +262,7 @@ export default async function AccountDetail({
                       Total
                     </td>
                     <td className="text-right font-semibold">
-                      {fmtGBP(holdingsMV)}
+                      {fmt(holdingsMV)}
                     </td>
                     <td />
                   </tr>
@@ -303,10 +300,10 @@ export default async function AccountDetail({
                       t.amount < 0 ? "text-red-600" : "text-green-700"
                     }`}
                   >
-                    {fmtGBP(t.amount)}
+                    {fmt(t.amount)}
                   </td>
                   <td className="text-right">
-                    {t.balanceAfter != null ? fmtGBP(t.balanceAfter) : "—"}
+                    {t.balanceAfter != null ? fmt(t.balanceAfter) : "—"}
                   </td>
                 </tr>
               ))
