@@ -4,20 +4,21 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { formatMoney } from "@/lib/format";
 
 type ClientAccount = {
   id: string;
   name: string;
   type: string; // "INVESTMENT" | "SAVINGS" | etc.
   number: string;
-  balance: number; // pence (cash)
+  balance: number; // minor units
   currency: string;
 };
 type ClientHolding = {
   id: string;
   accountId: string;
   quantity: number;
-  avgCostP: number; // pence
+  avgCostP: number; // minor units, in ACCOUNT currency
   updatedAt: string;
   security: { symbol: string; name: string; currency: string };
   account: { id: string; name: string };
@@ -25,8 +26,8 @@ type ClientHolding = {
 
 type Quote = {
   symbol: string;
-  priceP: number; // pence
-  changeP: number; // pence
+  priceP: number; // minor units (treated in ACCOUNT currency for display)
+  changeP: number; // minor units
   changePct: number;
   asOf: string;
 };
@@ -60,7 +61,7 @@ export default function InvestSection({
 }) {
   const router = useRouter();
 
-  // separate investment vs non-investment (e.g., Savings)
+  // Split investment vs non-investment (cash)
   const investAccs = React.useMemo(
     () => (accountsAll || []).filter((a) => a.type === "INVESTMENT"),
     [accountsAll]
@@ -70,7 +71,13 @@ export default function InvestSection({
     [accountsAll]
   );
 
-  // state
+  // Map accountId -> currency for correct formatting per holding
+  const ccyByAccountId = React.useMemo(
+    () => new Map(accountsAll.map((a) => [a.id, a.currency])),
+    [accountsAll]
+  );
+
+  // State
   const [accs, setAccs] = React.useState<ClientAccount[]>(investAccs);
   const [holds, setHolds] = React.useState<ClientHolding[]>(holdings);
 
@@ -82,6 +89,7 @@ export default function InvestSection({
       Array.from(new Set(holds.map((h) => h.security.symbol.toUpperCase()))),
     [holds]
   );
+
   const symbolOptions = React.useMemo(
     () => Array.from(new Set([...heldSyms, ...AVAILABLE_SYMBOLS])).sort(),
     [heldSyms]
@@ -144,27 +152,24 @@ export default function InvestSection({
     const m: Record<string, number> = {};
     for (const h of holds) {
       const sym = h.security.symbol.toUpperCase();
-      const priceP = qmap[sym]?.priceP ?? h.avgCostP;
+      const priceP = qmap[sym]?.priceP ?? h.avgCostP; // minor units
       const valueP = Math.round(Number(h.quantity) * priceP);
       m[h.accountId] = (m[h.accountId] || 0) + valueP;
     }
     return m;
   }, [holds, qmap]);
 
-  // currency helpers
-  function ccy(cur: string) {
-    switch (cur) {
-      case "USD":
-        return "$";
-      case "EUR":
-        return "€";
-      case "GBP":
-      default:
-        return "£";
-    }
-  }
-  const fmt = (pence: number, cur: string = "GBP") =>
-    `${ccy(cur)}${((pence ?? 0) / 100).toFixed(2)}`;
+  // 🔁 Replace hardcoded currency symbols with formatMoney using account currency
+  const money = (
+    minor: number,
+    accountIdForCcy?: string,
+    fallbackCcy = "GBP"
+  ) => {
+    const ccy = accountIdForCcy
+      ? ccyByAccountId.get(accountIdForCcy) || fallbackCcy
+      : fallbackCcy;
+    return formatMoney(minor, ccy);
+  };
 
   async function place(symRaw: string, side: "BUY" | "SELL") {
     setError(null);
@@ -184,7 +189,7 @@ export default function InvestSection({
       const j = await res.json();
       if (!res.ok || !j?.ok) throw new Error(j?.error || "Order failed");
 
-      // Update cash on the chosen investment account
+      // Update cash for selected account
       setAccs((prev) =>
         prev.map((a) =>
           a.id === accountId
@@ -216,7 +221,7 @@ export default function InvestSection({
         });
       }
 
-      // Optimistic holding update
+      // Optimistic holding update (use the ACCOUNT currency, not hardcoded GBP)
       const execPriceP = Number(j.execPricePence ?? qmap[sym]?.priceP ?? 0);
       setHolds((prev) => {
         const idx = prev.findIndex(
@@ -241,7 +246,7 @@ export default function InvestSection({
               quantity: qtyN,
               avgCostP: execPriceP || 0,
               updatedAt: new Date().toISOString(),
-              security: { symbol: sym, name: sym, currency: "GBP" },
+              security: { symbol: sym, name: sym, currency: acc.currency }, // 👈 use account currency
               account: { id: acc.id, name: acc.name },
             };
             return [newH, ...prev];
@@ -301,8 +306,8 @@ export default function InvestSection({
                     return (
                       <option key={a.id} value={a.id}>
                         {a.name} • {a.number.slice(-4)} • Cash{" "}
-                        {fmt(a.balance, a.currency)} • Total{" "}
-                        {fmt(totalP, a.currency)}
+                        {formatMoney(a.balance, a.currency)} • Total{" "}
+                        {formatMoney(totalP, a.currency)}
                       </option>
                     );
                   })}
@@ -376,7 +381,7 @@ export default function InvestSection({
         ) : null}
       </div>
 
-      {/* Current holdings (now includes a Cash row/card for each non-investment account, e.g., Savings) */}
+      {/* Current holdings */}
       <div className="card">
         <div className="font-semibold text-barclays-navy">Current holdings</div>
 
@@ -395,6 +400,8 @@ export default function InvestSection({
                 : "ring-1 ring-red-200";
               const priceP = q?.priceP ?? h.avgCostP;
               const valueP = Math.round(Number(h.quantity) * priceP);
+              const acctCcy =
+                ccyByAccountId.get(h.accountId) || h.security.currency || "GBP";
               return (
                 <div
                   key={h.id}
@@ -408,12 +415,12 @@ export default function InvestSection({
                   </div>
                   <div className="text-sm text-gray-600">{h.security.name}</div>
                   <div className="mt-2 text-lg font-semibold">
-                    {fmt(priceP, h.security.currency)}{" "}
+                    {formatMoney(priceP, acctCcy)}{" "}
                     <span className="text-sm text-gray-500">/sh</span>
                   </div>
                   <div className="mt-1 text-sm text-gray-600">
                     Qty {Number(h.quantity)} • Value{" "}
-                    {fmt(valueP, h.security.currency)}
+                    {formatMoney(valueP, acctCcy)}
                   </div>
                   <div className="mt-3 flex gap-2">
                     <button
@@ -447,7 +454,7 @@ export default function InvestSection({
                 </div>
                 <div className="text-sm text-gray-600">{a.name}</div>
                 <div className="mt-2 text-lg font-semibold">
-                  {fmt(a.balance, a.currency)}
+                  {formatMoney(a.balance, a.currency)}
                 </div>
                 <div className="mt-1 text-sm text-gray-600">
                   Account • {a.number}
@@ -496,24 +503,29 @@ export default function InvestSection({
                 const isUp = pct >= 0;
                 const color = isUp ? "text-green-700" : "text-red-600";
                 const valueP = Math.round(Number(h.quantity) * priceP);
+                const acctCcy =
+                  ccyByAccountId.get(h.accountId) ||
+                  h.security.currency ||
+                  "GBP";
                 const kBuy = `${sym}:BUY`,
                   kSell = `${sym}:SELL`;
+
                 return (
                   <tr key={h.id} className="border-t">
                     <td className="py-2">{h.account.name}</td>
                     <td className="font-medium">{sym}</td>
                     <td className="text-right">{Number(h.quantity)}</td>
                     <td className="text-right">
-                      {fmt(h.avgCostP, h.security.currency)}
+                      {formatMoney(h.avgCostP, acctCcy)}
                     </td>
                     <td className="text-right">
-                      {fmt(priceP, h.security.currency)}
+                      {formatMoney(priceP, acctCcy)}
                     </td>
                     <td className={`text-right font-medium ${color}`}>
                       {isUp ? "▲" : "▼"} {Math.abs(pct).toFixed(2)}%
                     </td>
                     <td className="text-right">
-                      {fmt(valueP, h.security.currency)}
+                      {formatMoney(valueP, acctCcy)}
                     </td>
                     <td className="text-right">
                       <div className="inline-flex items-center gap-2">
@@ -550,7 +562,9 @@ export default function InvestSection({
                   <td className="text-right">—</td>
                   <td className="text-right">—</td>
                   <td className="text-right">—</td>
-                  <td className="text-right">{fmt(a.balance, a.currency)}</td>
+                  <td className="text-right">
+                    {formatMoney(a.balance, a.currency)}
+                  </td>
                   <td className="text-right">
                     <Link
                       href={`/app/accounts/${a.id}`}

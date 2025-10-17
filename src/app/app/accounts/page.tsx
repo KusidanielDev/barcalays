@@ -2,11 +2,12 @@
 import Link from "next/link";
 import useSWR from "swr";
 import { useState } from "react";
+import { formatMoney } from "@/lib/format";
 
 type Account = {
   id: string;
   name: string;
-  balance: number; // pence
+  balance: number; // minor units
   type: string;
   currency: string;
   status: string;
@@ -15,10 +16,8 @@ type Account = {
 type Resp = { accounts: Account[] };
 const fetcher = (u: string) => fetch(u).then((r) => r.json() as Promise<Resp>);
 
-const fmtGBP = (p: number) =>
-  new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
-    p / 100
-  );
+// currency-aware formatter
+const fmt = (minor: number, ccy: string) => formatMoney(minor, ccy);
 
 export default function AccountsPage() {
   const { data, isLoading } = useSWR("/api/accounts", fetcher);
@@ -81,7 +80,7 @@ export default function AccountsPage() {
                   </span>
                 </td>
                 <td className="font-semibold text-barclays-navy">
-                  {fmtGBP(a.balance)}
+                  {fmt(a.balance, a.currency)}
                 </td>
                 <td className="text-right pr-4">
                   <div className="flex flex-wrap justify-end gap-2">
@@ -167,7 +166,7 @@ export default function AccountsPage() {
               <div>
                 <p className="text-sm text-gray-600">Balance</p>
                 <p className="text-xl font-bold text-barclays-navy">
-                  {fmtGBP(a.balance)}
+                  {fmt(a.balance, a.currency)}
                 </p>
               </div>
             </div>
