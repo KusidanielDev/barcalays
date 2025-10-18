@@ -1,10 +1,13 @@
 // FILE: src/app/app/page.tsx
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import InvestSection from "./parts/InvestSection";
 import StocksTicker from "./parts/StocksTicker";
-import StocksMultiChart from "./parts/StocksMultiChart";
+const StocksMultiChart = dynamic(() => import("./parts/StocksMultiChart"), {
+  ssr: false, // client-only to eliminate SSR/CSR drift
+});
 import IncomeSummary from "./parts/IncomeSummary";
 import { formatMoney } from "@/lib/format";
 

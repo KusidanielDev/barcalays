@@ -3,6 +3,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { formatMoney } from "@/lib/format";
 
 const SYMBOLS = ["TSLA", "AAPL", "NVDA", "MSFT", "INF"] as const;
 type Sym = (typeof SYMBOLS)[number];
@@ -12,8 +13,8 @@ type ClientAccount = {
   name: string; // e.g. "Investment Account EM Ltd"
   type: string; // "INVESTMENT" | "SAVINGS" | ...
   number: string; // display only
-  balance: number; // pence
-  currency: string; // e.g. "GBP"
+  balance: number; // minor units
+  currency: string; // e.g. "GBP" | "INR"
 };
 
 // Synthetic anchors (replace with real quotes later if desired)
@@ -25,6 +26,7 @@ const BASE: Record<Sym, number> = {
   INF: 8.5,
 };
 
+/** Deterministic price function (no float drift at render time). */
 function priceAt(sym: Sym, t: number) {
   const b = BASE[sym];
   const k1 = { TSLA: 6800, AAPL: 7200, NVDA: 6500, MSFT: 7500, INF: 9000 }[sym];
@@ -33,15 +35,17 @@ function priceAt(sym: Sym, t: number) {
   ];
   const a1 = { TSLA: 0.65, AAPL: 0.45, NVDA: 0.75, MSFT: 0.35, INF: 0.15 }[sym];
   const a2 = { TSLA: 0.3, AAPL: 0.25, NVDA: 0.35, MSFT: 0.22, INF: 0.08 }[sym];
+
+  // NOTE: no micro “Date.now() % ...” wobble; that was the 1p drift source.
   const wave =
     Math.sin(Math.floor(t / k1)) * a1 + Math.cos(Math.floor(t / k2)) * a2;
-  const micro = ((t % 10_000) / 10_000 - 0.5) * 0.35;
-  return Math.max(0.5, b + wave + micro);
+
+  return Math.max(0.5, b + wave);
 }
 
-const fmtGBP = (n: number) => `£${n.toFixed(2)}`;
-
-function linePath(values: number[], width = 340, height = 120, pad = 8) {
+/** Minor-units helpers */
+const toMinor = (major: number) => Math.round(major * 100); // integer
+const linePath = (values: number[], width = 340, height = 120, pad = 8) => {
   if (!values.length) return "";
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -54,7 +58,7 @@ function linePath(values: number[], width = 340, height = 120, pad = 8) {
   let d = `M ${x(0)} ${y(values[0])}`;
   for (let i = 1; i < values.length; i++) d += ` L ${x(i)} ${y(values[i])}`;
   return d;
-}
+};
 
 export default function StocksMultiChart({
   symbols,
@@ -66,60 +70,93 @@ export default function StocksMultiChart({
   const router = useRouter();
   const list = symbols ?? SYMBOLS;
 
-  // build series once + update every 5s
+  // ----- Avoid hydration mismatch: render numbers only after mount -----
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
+
+  // Build series once (after mount) + update every 5s
   const [active, setActive] = React.useState<Sym>(
     (list[0] ?? SYMBOLS[0]) as Sym
   );
   const [seriesBy, setSeriesBy] = React.useState<Record<string, number[]>>({});
 
+  // Use a stable t0 reference set on first client render to avoid SSR drift
+  const t0Ref = React.useRef<number | null>(null);
   React.useEffect(() => {
-    const t = Date.now();
+    if (!mounted) return;
+    if (t0Ref.current == null) t0Ref.current = Date.now();
+
+    const t0 = t0Ref.current;
     const init: Record<string, number[]> = {};
     for (const s of list) {
       const pts: number[] = [];
-      for (let i = 30; i >= 0; i--) pts.push(priceAt(s as Sym, t - i * 60_000));
+      // last 31 minutes (deterministic off t0)
+      for (let i = 30; i >= 0; i--)
+        pts.push(priceAt(s as Sym, t0 - i * 60_000));
       init[s] = pts;
     }
     setSeriesBy(init);
+
     const id = setInterval(() => {
       setSeriesBy((prev) => {
+        const now = Date.now();
         const next: Record<string, number[]> = {};
         for (const s of list) {
           const arr = prev[s] ?? [];
-          next[s] = arr.length
-            ? [...arr.slice(1), priceAt(s as Sym, Date.now())]
-            : [priceAt(s as Sym, Date.now())];
+          const nextVal = priceAt(s as Sym, now);
+          next[s] = arr.length ? [...arr.slice(1), nextVal] : [nextVal];
         }
         return next;
       });
     }, 5000);
-    return () => clearInterval(id);
-  }, [JSON.stringify(list)]);
 
-  // prices
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted, JSON.stringify(list)]);
+
+  // ----- prices (in MAJOR for chart, MINOR for display) -----
   const current = seriesBy[active] ?? [];
-  const last = current[current.length - 1] ?? priceAt(active, Date.now());
-  const prev = current[current.length - 2] ?? last;
-  const ch = last - prev;
-  const pct = prev ? (ch / prev) * 100 : 0;
-  const spread = last * 0.001; // 10 bps
-  const buyPx = last + spread; // ask
-  const sellPx = last - spread; // bid
-  const color = ch >= 0 ? "#15803d" : "#dc2626";
+  const lastMajor = current[current.length - 1];
+  const prevMajor = current[current.length - 2];
+  const chMajor =
+    lastMajor != null && prevMajor != null ? lastMajor - prevMajor : 0;
+  const pct = prevMajor ? (chMajor / prevMajor) * 100 : 0;
+
+  // add a tiny fixed spread (deterministic, not time-based)
+  const spreadMajor = (lastMajor ?? BASE[active]) * 0.001; // 10 bps
+  const buyMajor = (lastMajor ?? BASE[active]) + spreadMajor; // ask
+  const sellMajor = (lastMajor ?? BASE[active]) - spreadMajor; // bid
+
+  // Convert to MINOR for display with formatMoney
+  const lastMinor = toMinor(lastMajor ?? BASE[active]);
+  const buyMinor = toMinor(buyMajor);
+  const sellMinor = toMinor(sellMajor);
+
+  const color = chMajor >= 0 ? "#15803d" : "#dc2626";
   const gradId = `grad-${active}`;
 
-  // accounts
+  // ----- accounts / currency awareness -----
   const investAccounts = React.useMemo(
     () => (accounts || []).filter((a) => a.type === "INVESTMENT"),
     [accounts]
   );
+
   const [accountId, setAccountId] = React.useState<string>("");
   React.useEffect(() => {
     if (!accountId && investAccounts.length) setAccountId(investAccounts[0].id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [investAccounts.length]);
 
-  // trade
+  const accountMap = React.useMemo(() => {
+    const m: Record<string, ClientAccount> = {};
+    for (const a of investAccounts) m[a.id] = a;
+    return m;
+  }, [investAccounts]);
+
+  const selectedAccount = accountId ? accountMap[accountId] : investAccounts[0];
+  const displayCurrency = selectedAccount?.currency || "GBP";
+
+  // ----- trade -----
   const [qty, setQty] = React.useState("1");
   const [submitting, setSubmitting] = React.useState<null | "BUY" | "SELL">(
     null
@@ -147,10 +184,14 @@ export default function StocksMultiChart({
       const j = await res.json();
       if (!res.ok || !j?.ok) throw new Error(j?.error || "Order failed");
 
+      const execMinor = Number(
+        j.execPricePence ?? toMinor(lastMajor ?? BASE[active])
+      );
       setMsg({
-        ok: `${side} ${q} ${active} @ £${(
-          (j.execPricePence ?? Math.round(last * 100)) / 100
-        ).toFixed(2)}`,
+        ok: `${side} ${q} ${active} @ ${formatMoney(
+          execMinor,
+          displayCurrency
+        )}`,
       });
       router.refresh(); // refresh server state (cash/holdings)
       setTimeout(() => setMsg(null), 2200);
@@ -200,8 +241,8 @@ export default function StocksMultiChart({
             {investAccounts.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
-                {a.number ? ` • ${a.number.slice(-4)}` : ""} • Cash £
-                {(a.balance / 100).toFixed(2)}
+                {a.number ? ` • ${a.number.slice(-4)}` : ""} • Cash{" "}
+                {formatMoney(a.balance, a.currency)}
               </option>
             ))}
           </select>
@@ -212,22 +253,39 @@ export default function StocksMultiChart({
       <div className="mt-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div className="min-w-0">
           <div className="text-sm text-gray-500">{active}</div>
+
+          {/* Avoid hydration warning: only show numbers after mount */}
           <div className="mt-1 text-2xl font-semibold">
-            {fmtGBP(last)} <span className="text-sm text-gray-500">/share</span>
+            <span suppressHydrationWarning>
+              {mounted ? formatMoney(lastMinor, displayCurrency) : "—"}
+            </span>{" "}
+            <span className="text-sm text-gray-500">/share</span>
           </div>
+
           <div className="mt-1 text-sm" style={{ color }}>
-            {ch >= 0 ? "▲" : "▼"} {Math.abs(ch).toFixed(2)} (
-            {Math.abs(pct).toFixed(2)}%) today
+            {chMajor >= 0 ? "▲" : "▼"}{" "}
+            <span suppressHydrationWarning>
+              {mounted ? Math.abs(chMajor).toFixed(2) : "—"}
+            </span>{" "}
+            (
+            <span suppressHydrationWarning>
+              {mounted ? Math.abs(pct).toFixed(2) : "—"}
+            </span>
+            %) today
           </div>
 
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
             <div className="rounded-xl border p-3">
               <div className="text-xs text-gray-600">Buy</div>
-              <div className="font-semibold">{fmtGBP(buyPx)}</div>
+              <div className="font-semibold" suppressHydrationWarning>
+                {mounted ? formatMoney(buyMinor, displayCurrency) : "—"}
+              </div>
             </div>
             <div className="rounded-xl border p-3">
               <div className="text-xs text-gray-600">Sell</div>
-              <div className="font-semibold">{fmtGBP(sellPx)}</div>
+              <div className="font-semibold" suppressHydrationWarning>
+                {mounted ? formatMoney(sellMinor, displayCurrency) : "—"}
+              </div>
             </div>
             <label className="block">
               <div className="text-xs text-gray-600 mb-1">Quantity</div>
